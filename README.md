@@ -1,5 +1,13 @@
 ![LibrePods Banner](/imgs/banner.png)
 
+
+> [!NOTE]
+> **Project Development History & Conversation Logs**:
+> The complete conversation history, architectural decisions, and technical solutions spanning 54 turns are preserved in [**CONVERSATIONS.md**](CONVERSATIONS.md) and [**conversations/SUMMARY.md**](conversations/SUMMARY.md). Detailed turn-by-turn logs are in [**conversations/CONVERSATION_HISTORY.md**](conversations/CONVERSATION_HISTORY.md).
+> 
+> **Open-Source Driver & Architecture**:
+> Reverse-engineering analysis of the Windows driver is in [**docs/DRIVER_ANALYSIS.md**](docs/DRIVER_ANALYSIS.md). Clean-room, open-source C kernel driver source code is in [**windows/driver/LibreAAP/**](windows/driver/LibreAAP/).
+
 ## What is LibrePods?
 
 LibrePods unlocks Apple's exclusive AirPods features on non-Apple devices. Get access to noise control modes, adaptive transparency, ear detection, hearing aid, customized transparency mode, battery status, and more - all the premium features you paid for but Apple locked to their ecosystem.
@@ -119,6 +127,12 @@ A huge thank you to everyone supporting the project!
 - @SmartMsg
 - @lunaroyster
 - @ressiwage
+
+## Credits & Original Developers
+
+- **Original LibrePods Project & Protocol Architecture**: Created by [@kavishdevar](https://github.com/kavishdevar) ([librepods](https://github.com/kavishdevar/librepods)).
+- **Windows Port**: Originally developed by [@Tblob18](https://github.com/Tblob18) ([librepods-windows](https://github.com/Tblob18/librepods-windows)).
+- **Kernel L2CAP Driver Architecture**: Based on Microsoft Open-Source Windows Driver Samples ([bthecho](https://github.com/microsoft/Windows-driver-samples/tree/main/bluetooth/bthecho)).
 
 ## Special thanks
 - @tyalie for making the first documentation on the protocol! ([tyalie/AAP-Protocol-Definition](https://github.com/tyalie/AAP-Protocol-Defintion))

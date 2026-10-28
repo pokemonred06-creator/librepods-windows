@@ -113,15 +113,47 @@ void MediaController::followMediaChanges() {
 bool MediaController::isActiveOutputDeviceAirPods() {
   QString defaultSink = getDefaultSink();
   LOG_DEBUG("Default sink: " << defaultSink);
+#ifdef Q_OS_WIN
+  if (defaultSink.isEmpty()) {
+    return false;
+  }
+  if (!m_deviceOutputName.isEmpty() && defaultSink.compare(m_deviceOutputName, Qt::CaseInsensitive) == 0) {
+    return true;
+  }
+  m_deviceOutputName = getAudioDeviceName();
+  if (!m_deviceOutputName.isEmpty() && defaultSink.compare(m_deviceOutputName, Qt::CaseInsensitive) == 0) {
+    return true;
+  }
+  return false;
+#else
   return defaultSink.contains(connectedDeviceMacAddress);
+#endif
+}
+
+void MediaController::resetConversationalAwareness() {
+  if (initialVolume != -1) {
+    QString defaultSink = getDefaultSink();
+    if (!defaultSink.isEmpty()) {
+      if (setSinkVolume(defaultSink, initialVolume)) {
+        LOG_INFO("Volume restored upon CA reset to " << initialVolume << "%");
+      }
+    }
+    initialVolume = -1;
+  }
 }
 
 void MediaController::handleConversationalAwareness(const QByteArray &data) {
   LOG_DEBUG("Handling conversational awareness data: " << data.toHex());
-  bool lowered = data[9] == 0x01;
-  LOG_INFO("Conversational awareness: " << (lowered ? "enabled" : "disabled"));
+  if (data.size() < 10) {
+    LOG_ERROR("Invalid conversational awareness packet");
+    return;
+  }
 
-  if (lowered) {
+  uint8_t flag = static_cast<uint8_t>(data[9]);
+
+  switch (flag) {
+  case 0x01:
+    LOG_INFO("Conversational awareness event: voice detected");
     if (initialVolume == -1 && isActiveOutputDeviceAirPods()) {
       QString defaultSink = getDefaultSink();
       initialVolume = getSinkVolume(defaultSink);
@@ -131,14 +163,28 @@ void MediaController::handleConversationalAwareness(const QByteArray &data) {
       }
       LOG_DEBUG("Initial volume: " << initialVolume << "%");
     }
-    QString defaultSink = getDefaultSink();
-    int targetVolume = initialVolume * 0.20;
-    if (setSinkVolume(defaultSink, targetVolume)) {
-      LOG_INFO("Volume lowered to 0.20 of initial which is " << targetVolume << "%");
-    } else {
-      LOG_ERROR("Failed to lower volume");
+    if (initialVolume != -1) {
+      QString defaultSink = getDefaultSink();
+      int targetVolume = initialVolume * 0.20;
+      if (setSinkVolume(defaultSink, targetVolume)) {
+        LOG_INFO("Volume lowered to 0.20 of initial which is " << targetVolume << "%");
+      } else {
+        LOG_ERROR("Failed to lower volume");
+      }
     }
-  } else {
+    break;
+
+  case 0x08:
+    LOG_INFO("Conversational awareness disabled");
+    initialVolume = -1;
+    break;
+
+  case 0x09:
+    LOG_INFO("Conversational awareness enabled");
+    break;
+
+  default:
+    LOG_INFO("Conversational awareness event: voice ended");
     if (initialVolume != -1 && isActiveOutputDeviceAirPods()) {
       QString defaultSink = getDefaultSink();
       if (setSinkVolume(defaultSink, initialVolume)) {
@@ -148,6 +194,7 @@ void MediaController::handleConversationalAwareness(const QByteArray &data) {
       }
       initialVolume = -1;
     }
+    break;
   }
 }
 
@@ -232,6 +279,7 @@ void MediaController::activateA2dpProfile() {
 }
 
 void MediaController::removeAudioOutputDevice() {
+  resetConversationalAwareness();
   if (connectedDeviceMacAddress.isEmpty() || m_deviceOutputName.isEmpty()) {
     LOG_WARN("Connected device MAC address or output name is empty, cannot remove audio output device");
     return;
@@ -424,6 +472,7 @@ void MediaController::pause()
 }
 
 MediaController::~MediaController() {
+  resetConversationalAwareness();
 }
 
 QString MediaController::getAudioDeviceName()

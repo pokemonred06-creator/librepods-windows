@@ -6,6 +6,7 @@
 #include "battery.hpp"
 #include "enums.h"
 #include "eardetection.hpp"
+#include "spatialaudiotracker.hpp"
 
 using namespace AirpodsTrayApp::Enums;
 
@@ -19,8 +20,11 @@ class DeviceInfo : public QObject
     Q_PROPERTY(int adaptiveNoiseLevel READ adaptiveNoiseLevel WRITE setAdaptiveNoiseLevel NOTIFY adaptiveNoiseLevelChanged)
     Q_PROPERTY(QString deviceName READ deviceName WRITE setDeviceName NOTIFY deviceNameChanged)
     Q_PROPERTY(Battery *battery READ getBattery CONSTANT)
+    Q_PROPERTY(SpatialAudioTracker *spatialTracker READ getSpatialTracker CONSTANT)
     Q_PROPERTY(bool oneBudANCMode READ oneBudANCMode WRITE setOneBudANCMode NOTIFY oneBudANCModeChanged)
     Q_PROPERTY(AirPodsModel model READ model WRITE setModel NOTIFY modelChanged)
+    Q_PROPERTY(QString modelDisplayName READ modelDisplayName NOTIFY modelChanged)
+    Q_PROPERTY(QString modelNumber READ modelNumber WRITE setModelNumber NOTIFY modelChanged)
     Q_PROPERTY(bool adaptiveModeActive READ adaptiveModeActive NOTIFY noiseControlModeChangedInt)
     Q_PROPERTY(QString podIcon READ podIcon NOTIFY modelChanged)
     Q_PROPERTY(QString caseIcon READ caseIcon NOTIFY modelChanged)
@@ -31,7 +35,7 @@ class DeviceInfo : public QObject
     Q_PROPERTY(QString magicAccEncKey READ magicAccEncKeyHex CONSTANT)
 
 public:
-    explicit DeviceInfo(QObject *parent = nullptr) : QObject(parent), m_battery(new Battery(this)), m_earDetection(new EarDetection(this)) {
+    explicit DeviceInfo(QObject *parent = nullptr) : QObject(parent), m_battery(new Battery(this)), m_earDetection(new EarDetection(this)), m_spatialTracker(new SpatialAudioTracker(this)) {
         connect(getEarDetection(), &EarDetection::statusChanged, this, &DeviceInfo::primaryChanged);
     }
 
@@ -129,7 +133,12 @@ public:
     QString magicAccEncKeyHex() const { return QString::fromUtf8(m_magicAccEncKey.toHex()); }
 
     QString modelNumber() const { return m_modelNumber; }
-    void setModelNumber(const QString &modelNumber) { m_modelNumber = modelNumber; }
+    void setModelNumber(const QString &modelNumber) {
+        if (m_modelNumber != modelNumber) {
+            m_modelNumber = modelNumber;
+            emit modelChanged();
+        }
+    }
 
     QString manufacturer() const { return m_manufacturer; }
     void setManufacturer(const QString &manufacturer) { m_manufacturer = manufacturer; }
@@ -144,6 +153,7 @@ public:
         }
     }
 
+    QString modelDisplayName() const { return getModelDisplayName(model()); }
     QString podIcon() const { return getModelIcon(model()).first; }
     QString caseIcon() const { return getModelIcon(model()).second; }
     bool isLeftPodInEar() const
@@ -160,6 +170,7 @@ public:
     bool adaptiveModeActive() const { return noiseControlMode() == NoiseControlMode::Adaptive; }
 
     EarDetection *getEarDetection() const { return m_earDetection; }
+    SpatialAudioTracker *getSpatialTracker() const { return m_spatialTracker; }
 
     void reset()
     {
@@ -220,7 +231,7 @@ signals:
 
 private:
     QString m_batteryStatus;
-    NoiseControlMode m_noiseControlMode = NoiseControlMode::Transparency;
+    NoiseControlMode m_noiseControlMode = NoiseControlMode::NoiseCancellation;
     bool m_conversationalAwareness = false;
     bool m_hearingAidEnabled = false;
     int m_adaptiveNoiseLevel = 50;
@@ -234,4 +245,5 @@ private:
     QString m_manufacturer;
     QString m_bluetoothAddress;
     EarDetection *m_earDetection;
+    SpatialAudioTracker *m_spatialTracker = nullptr;
 };

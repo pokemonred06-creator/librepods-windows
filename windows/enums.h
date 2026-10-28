@@ -33,7 +33,9 @@ namespace AirpodsTrayApp
             AirPodsMaxLightning,
             AirPodsMaxUSBC,
             AirPods4,
-            AirPods4ANC
+            AirPods4ANC,
+            AirPods5,
+            AirPods5WCC
         };
         Q_ENUM_NS(AirPodsModel)
 
@@ -55,6 +57,10 @@ namespace AirpodsTrayApp
                 {"A3047", AirPodsModel::AirPodsPro2USBC},
                 {"A3048", AirPodsModel::AirPodsPro2USBC},
                 {"A3049", AirPodsModel::AirPodsPro2USBC},
+                {"A3063", AirPodsModel::AirPodsPro2USBC},
+                {"A3064", AirPodsModel::AirPodsPro2USBC},
+                {"A3065", AirPodsModel::AirPodsPro2USBC},
+                {"A2968", AirPodsModel::AirPodsPro2USBC},
                 {"A2931", AirPodsModel::AirPodsPro2Lightning},
                 {"A2699", AirPodsModel::AirPodsPro2Lightning},
                 {"A2698", AirPodsModel::AirPodsPro2Lightning},
@@ -63,9 +69,39 @@ namespace AirpodsTrayApp
                 {"A3054", AirPodsModel::AirPods4},
                 {"A3056", AirPodsModel::AirPods4ANC},
                 {"A3055", AirPodsModel::AirPods4ANC},
-                {"A3057", AirPodsModel::AirPods4ANC}};
+                {"A3057", AirPodsModel::AirPods4ANC},
+                {"A3531", AirPodsModel::AirPods5},
+                {"A3532", AirPodsModel::AirPods5},
+                {"A3533", AirPodsModel::AirPods5},
+                {"A3439", AirPodsModel::AirPods5WCC},
+                {"A3440", AirPodsModel::AirPods5WCC},
+                {"A3441", AirPodsModel::AirPods5WCC}};
 
-            return modelNumberMap.value(modelNumber, AirPodsModel::Unknown);
+            if (modelNumberMap.contains(modelNumber)) {
+                return modelNumberMap.value(modelNumber);
+            }
+            if (modelNumber.startsWith("A306") || modelNumber.startsWith("A304") || modelNumber.startsWith("A269") || modelNumber.startsWith("A208")) {
+                return AirPodsModel::AirPodsPro2USBC;
+            }
+            return AirPodsModel::Unknown;
+        }
+
+        inline QString getModelDisplayName(AirPodsModel model) {
+            switch (model) {
+                case AirPodsModel::AirPods1: return "AirPods (1st gen)";
+                case AirPodsModel::AirPods2: return "AirPods (2nd gen)";
+                case AirPodsModel::AirPods3: return "AirPods (3rd gen)";
+                case AirPodsModel::AirPods4: return "AirPods 4";
+                case AirPodsModel::AirPods4ANC: return "AirPods 4 (ANC)";
+                case AirPodsModel::AirPods5: return "AirPods 5";
+                case AirPodsModel::AirPods5WCC: return "AirPods 5 (Wireless Charging)";
+                case AirPodsModel::AirPodsPro: return "AirPods Pro (1st gen)";
+                case AirPodsModel::AirPodsPro2Lightning: return "AirPods Pro 2 (Lightning)";
+                case AirPodsModel::AirPodsPro2USBC: return "AirPods Pro 2 (USB-C)";
+                case AirPodsModel::AirPodsMaxLightning: return "AirPods Max (Lightning)";
+                case AirPodsModel::AirPodsMaxUSBC: return "AirPods Max (USB-C)";
+                default: return "AirPods Pro";
+            }
         }
 
         // Return icons based on model
@@ -79,6 +115,8 @@ namespace AirpodsTrayApp
                 case AirPodsModel::AirPods4:
                 case AirPodsModel::AirPods4ANC:
                     return {"pod3.png", "pod4_case.png"};
+                case AirPodsModel::AirPods5:
+                case AirPodsModel::AirPods5WCC:
                 case AirPodsModel::AirPodsPro:
                 case AirPodsModel::AirPodsPro2Lightning:
                 case AirPodsModel::AirPodsPro2USBC:
@@ -87,7 +125,7 @@ namespace AirpodsTrayApp
                 case AirPodsModel::AirPodsMaxUSBC:
                     return {"podmax.png", "max_case.png"};
                 default:
-                    return {"pod.png", "pod_case.png"}; // Default icon for unknown models
+                    return {"podpro.png", "podpro_case.png"}; // Default to AirPods Pro
             }
         }
 

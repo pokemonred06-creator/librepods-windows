@@ -2,46 +2,45 @@ pragma ComponentBehavior: Bound
 
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
 
 Control {
     id: root
 
-    // Properties
-    property var model: ["Option 1", "Option 2"] // Default model
+    property var model: ["Off", "Noise Cancellation", "Transparency", "Adaptive"]
     property int currentIndex: 0
 
-    // Colors using system palette
-    readonly property color backgroundColor: palette.light
-    readonly property color selectedColor: palette.highlight
-    readonly property color textColor: palette.buttonText
-    readonly property color selectedTextColor: palette.highlightedText
+    signal activated(int index)
 
-    // System palette
-    SystemPalette {
-        id: palette
-    }
+    readonly property color trackBgColor: "#0f131d"
+    readonly property color trackBorderColor: "#273146"
+    readonly property color selectedBgColor: "#2563eb"
+    readonly property color selectedBorderColor: "#3b82f6"
+    readonly property color normalTextColor: "#94a3b8"
+    readonly property color selectedTextColor: "#ffffff"
 
-    // Internal properties
-    padding: 6
-    implicitHeight: 32
-    // Removed: implicitWidth: Math.max(200, model.length * 100)
+    padding: 3
+    implicitHeight: 36
+    implicitWidth: 320
 
-    // Set focus policy to enable keyboard navigation
     focusPolicy: Qt.StrongFocus
     activeFocusOnTab: true
 
-    // Styling
     background: Rectangle {
         radius: height / 2
-        color: root.backgroundColor
-        border.width: root.activeFocus ? 1 : 0
-        border.color: root.selectedColor
+        color: root.trackBgColor
+        border.width: root.activeFocus ? 1.5 : 1
+        border.color: root.activeFocus ? root.selectedBorderColor : root.trackBorderColor
     }
 
     contentItem: Row {
-        spacing: root.padding
+        id: buttonRow
+        spacing: 3
+        anchors.fill: parent
+        anchors.margins: root.padding
 
         Repeater {
+            id: buttonRepeater
             model: root.model
 
             delegate: Button {
@@ -49,32 +48,29 @@ Control {
                 required property int index
                 required property string modelData
                 text: modelData
-                // Removed: width: (root.availableWidth - (root.model.length - 1) * root.padding) / root.model.length
-                height: root.availableHeight
-                focusPolicy: Qt.NoFocus // Let the root control handle focus
 
-                // Add explicit text color
+                width: (buttonRow.width - (root.model.length - 1) * buttonRow.spacing) / root.model.length
+                height: buttonRow.height
+                focusPolicy: Qt.NoFocus
+
                 contentItem: Text {
                     text: segmentButton.text
-                    font: segmentButton.font
-                    color: root.currentIndex === segmentButton.index ? root.selectedTextColor : root.textColor
+                    font.pixelSize: segmentButton.width < 60 ? 9 : (segmentButton.width < 75 ? 10 : 11)
+                    font.weight: root.currentIndex === segmentButton.index ? Font.Bold : Font.Normal
+                    color: root.currentIndex === segmentButton.index ? root.selectedTextColor : (segmentButton.hovered ? "#f1f5f9" : root.normalTextColor)
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    leftPadding: 2
-                    rightPadding: 2
                     elide: Text.ElideRight
                 }
 
                 background: Rectangle {
                     radius: height / 2
-                    color: root.currentIndex === segmentButton.index ? root.selectedColor : "transparent"
-                    border.width: 0
+                    color: root.currentIndex === segmentButton.index ? root.selectedBgColor : (segmentButton.hovered ? "#182030" : "transparent")
+                    border.width: root.currentIndex === segmentButton.index ? 1 : 0
+                    border.color: root.selectedBorderColor
 
                     Behavior on color {
-                        ColorAnimation {
-                            duration: 600
-                            easing.type: Easing.OutQuad
-                        }
+                        ColorAnimation { duration: 180; easing.type: Easing.OutQuad }
                     }
                 }
 
@@ -82,33 +78,38 @@ Control {
                     if (root.currentIndex !== index) {
                         root.currentIndex = index;
                     }
+                    root.activated(index);
                 }
             }
         }
     }
 
-    // Handle key events for navigation
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Left) {
             if (root.currentIndex > 0) {
                 root.currentIndex--;
+                root.activated(root.currentIndex);
                 event.accepted = true;
             }
         } else if (event.key === Qt.Key_Right) {
             if (root.currentIndex < root.model.length - 1) {
                 root.currentIndex++;
+                root.activated(root.currentIndex);
                 event.accepted = true;
             }
         } else if (event.key === Qt.Key_Home) {
             root.currentIndex = 0;
+            root.activated(0);
             event.accepted = true;
         } else if (event.key === Qt.Key_End) {
             root.currentIndex = root.model.length - 1;
+            root.activated(root.currentIndex);
             event.accepted = true;
         } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
             const index = event.key - Qt.Key_1;
-            if (index <= root.model.length) {
+            if (index < root.model.length) {
                 root.currentIndex = index;
+                root.activated(index);
                 event.accepted = true;
             }
         }

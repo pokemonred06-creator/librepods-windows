@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
-find_package(Qt6 REQUIRED COMPONENTS Quick Widgets Bluetooth Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Quick Widgets Bluetooth Multimedia Network)
 find_package(OpenSSL REQUIRED)
 
 qt_standard_project_setup()
@@ -40,6 +40,7 @@ qt_add_executable(librepods-windows
     eardetection.hpp
     windowssleepmonitor.hpp
     windowssleepmonitor.cpp
+    spatialaudiotracker.hpp
 )
 
 qt_add_qml_module(librepods-windows
@@ -77,12 +78,14 @@ target_link_libraries(librepods-windows
     Qt6::Widgets 
     Qt6::Bluetooth 
     Qt6::Multimedia
+    Qt6::Network
     OpenSSL::SSL 
     OpenSSL::Crypto
     # Windows-specific libraries
     Ole32
     User32
     PowrProf
+    Cfgmgr32
 )
 
 # Set Windows subsystem to console for debugging, change to WINDOWS for release
@@ -95,5 +98,15 @@ include(GNUInstallDirs)
 install(TARGETS librepods-windows
     BUNDLE DESTINATION .
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+qt_add_executable(librepods-ctl
+    librepods-ctl.cpp
+)
+target_link_libraries(librepods-ctl
+    PRIVATE Qt6::Core Qt6::Network
+)
+install(TARGETS librepods-ctl
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

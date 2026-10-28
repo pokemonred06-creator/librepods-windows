@@ -238,6 +238,69 @@ namespace AirPodsPackets
         }
     }
 
+    // Spatial Audio / Head Tracking
+    namespace SpatialAudio
+    {
+        // START_ALT is confirmed on hardware to stream true 70+ byte motion frames
+        static const QByteArray START_TRACKING_ALT = QByteArray::fromHex("040004001700000010000f000873420b081010021a0501409c0000");
+        // START_DEF is the alternative start packet
+        static const QByteArray START_TRACKING_DEF = QByteArray::fromHex("04000400170000001000100008a102420b080e10021a0501409c0000");
+        static const QByteArray START_TRACKING     = START_TRACKING_ALT;
+        static const QByteArray STOP_TRACKING      = QByteArray::fromHex("040004001700000010001100087e1002420b084e10021a050100000000");
+        static const QByteArray HEADER             = QByteArray::fromHex("040004001700");
+        static const QByteArray HT_PREFIX          = QByteArray::fromHex("04000400170000001000");
+
+        struct RawSample {
+            qint16 o1 = 0;
+            qint16 o2 = 0;
+            qint16 o3 = 0;
+            bool valid = false;
+        };
+
+        inline bool isSensorPacket(const QByteArray &data)
+        {
+            if (data.size() < 70) return false;
+            if (!data.startsWith(HT_PREFIX)) return false;
+            quint8 tag = static_cast<quint8>(data.at(10));
+            quint8 sub = static_cast<quint8>(data.at(11));
+            return (tag == 0x44 || tag == 0x45) && sub == 0x00;
+        }
+
+        inline RawSample parseRawSample(const QByteArray &data)
+        {
+            RawSample s;
+            if (!isSensorPacket(data)) {
+                return s;
+            }
+            s.o1 = static_cast<qint16>(static_cast<quint8>(data[43]) | (static_cast<quint8>(data[44]) << 8));
+            s.o2 = static_cast<qint16>(static_cast<quint8>(data[45]) | (static_cast<quint8>(data[46]) << 8));
+            s.o3 = static_cast<qint16>(static_cast<quint8>(data[47]) | (static_cast<quint8>(data[48]) << 8));
+            s.valid = true;
+            return s;
+        }
+
+        struct Orientation {
+            double yaw = 0.0;
+            double pitch = 0.0;
+            double roll = 0.0;
+            bool valid = false;
+        };
+
+        inline Orientation parseOrientation(const QByteArray &data)
+        {
+            Orientation ori;
+            RawSample s = parseRawSample(data);
+            if (!s.valid) {
+                return ori;
+            }
+            ori.pitch = qBound(-90.0, ((s.o2 + s.o3) / 2.0 / 32000.0) * 180.0, 90.0);
+            ori.yaw   = qBound(-180.0, ((s.o2 - s.o3) / 2.0 / 32000.0) * 180.0, 180.0);
+            ori.roll  = qBound(-180.0, (((s.o1 - (s.o2 + s.o3) / 2.0) / 2.0) / 32000.0) * 180.0, 180.0);
+            ori.valid = true;
+            return ori;
+        }
+    }
+
     // Parsing Headers
     namespace Parse
     {
@@ -246,6 +309,7 @@ namespace AirPodsPackets
         static const QByteArray METADATA = QByteArray::fromHex("040004001d");
         static const QByteArray HANDSHAKE_ACK = QByteArray::fromHex("01000400");
         static const QByteArray FEATURES_ACK = QByteArray::fromHex("040004002b00"); // Note: Only tested with airpods pro 2
+        static const QByteArray SPATIAL_AUDIO = QByteArray::fromHex("040004001700");
     }
 }
 

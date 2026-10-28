@@ -70,7 +70,7 @@ public:
     // Parse the battery status packet and detect primary/secondary pods
     bool parsePacket(const QByteArray &packet)
     {
-        if (!packet.startsWith(AirPodsPackets::Parse::BATTERY_STATUS))
+        if (!packet.startsWith(AirPodsPackets::Parse::BATTERY_STATUS) || packet.size() < 7)
         {
             return false;
         }
@@ -215,6 +215,35 @@ public:
         emit primaryChanged();
 
         return true;
+    }
+
+    void updateFromBleRaw(int leftLevel, bool leftCharging,
+                          int rightLevel, bool rightCharging,
+                          int caseLevel, bool caseCharging,
+                          bool primaryLeft)
+    {
+        if (leftLevel >= 0) {
+            states[Component::Left] = {
+                static_cast<quint8>(leftLevel),
+                leftCharging ? BatteryStatus::Charging : BatteryStatus::Discharging
+            };
+        }
+        if (rightLevel >= 0) {
+            states[Component::Right] = {
+                static_cast<quint8>(rightLevel),
+                rightCharging ? BatteryStatus::Charging : BatteryStatus::Discharging
+            };
+        }
+        if (caseLevel >= 0) {
+            states[Component::Case] = {
+                static_cast<quint8>(caseLevel),
+                caseCharging ? BatteryStatus::Charging : BatteryStatus::Discharging
+            };
+        }
+        primaryPod = primaryLeft ? Component::Left : Component::Right;
+        secondaryPod = primaryLeft ? Component::Right : Component::Left;
+        emit batteryStatusChanged();
+        emit primaryChanged();
     }
 
     // Get the raw state for a component

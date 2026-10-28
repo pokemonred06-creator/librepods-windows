@@ -31,6 +31,104 @@
 #include "systemsleepmonitor.hpp"
 #elif defined(Q_OS_WIN)
 #include "windowssleepmonitor.hpp"
+#include <windows.h>
+#include <cfgmgr32.h>
+#include <thread>
+#include <atomic>
+#include <vector>
+#include <string>
+
+static const GUID GUID_DEVINTERFACE_MAGICAAP =
+    { 0x9eec98bb, 0x3c54, 0x45d4, { 0xa8, 0x43, 0x79, 0x00, 0xc4, 0x63, 0x5e, 0x08 } };
+
+static const GUID GUID_DEVINTERFACE_AAP_SERVER =
+    { 0x74ec2172, 0x0bad, 0x4d01, { 0x8f, 0x77, 0x99, 0x7b, 0x2b, 0xe0, 0x72, 0x2a } };
+
+static std::vector<std::wstring> GetMagicAapInterfaces(const GUID &interfaceGuid) {
+    std::vector<std::wstring> paths;
+    ULONG length = 0;
+    CONFIGRET cr = CM_Get_Device_Interface_List_SizeW(&length, const_cast<LPGUID>(&interfaceGuid), NULL, CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
+    if (cr != CR_SUCCESS || length <= 1) return paths;
+
+    std::vector<wchar_t> buffer(length);
+    cr = CM_Get_Device_Interface_ListW(const_cast<LPGUID>(&interfaceGuid), NULL, buffer.data(), length, CM_GET_DEVICE_INTERFACE_LIST_PRESENT);
+    if (cr != CR_SUCCESS) return paths;
+
+    wchar_t* p = buffer.data();
+    while (*p) {
+        paths.push_back(p);
+        p += wcslen(p) + 1;
+    }
+    return paths;
+}
+typedef HANDLE HBLUETOOTH_DEVICE_FIND;
+typedef struct _BLUETOOTH_DEVICE_SEARCH_PARAMS {
+    DWORD dwSize;
+    BOOL fReturnAuthenticated;
+    BOOL fReturnRemembered;
+    BOOL fReturnUnknown;
+    BOOL fReturnConnected;
+    BOOL fIssueInquiry;
+    UCHAR cTimeoutMultiplier;
+    HANDLE hRadio;
+} BLUETOOTH_DEVICE_SEARCH_PARAMS;
+
+typedef struct _BLUETOOTH_DEVICE_INFO {
+    DWORD dwSize;
+    ULONG64 Address;
+    ULONG ulClassofDevice;
+    BOOL fConnected;
+    BOOL fRemembered;
+    BOOL fAuthenticated;
+    SYSTEMTIME stLastSeen;
+    SYSTEMTIME stLastUsed;
+    WCHAR szName[248];
+} BLUETOOTH_DEVICE_INFO;
+
+typedef HBLUETOOTH_DEVICE_FIND (WINAPI *pfnBluetoothFindFirstDevice)(const BLUETOOTH_DEVICE_SEARCH_PARAMS*, BLUETOOTH_DEVICE_INFO*);
+typedef BOOL (WINAPI *pfnBluetoothFindNextDevice)(HBLUETOOTH_DEVICE_FIND, BLUETOOTH_DEVICE_INFO*);
+typedef BOOL (WINAPI *pfnBluetoothFindDeviceClose)(HBLUETOOTH_DEVICE_FIND);
+
+static bool IsAirPodsConnectedWin32() {
+    HMODULE hBth = LoadLibraryW(L"bthprops.cpl");
+    if (!hBth) return false;
+
+    pfnBluetoothFindFirstDevice pFindFirst = (pfnBluetoothFindFirstDevice)GetProcAddress(hBth, "BluetoothFindFirstDevice");
+    pfnBluetoothFindNextDevice pFindNext = (pfnBluetoothFindNextDevice)GetProcAddress(hBth, "BluetoothFindNextDevice");
+    pfnBluetoothFindDeviceClose pFindClose = (pfnBluetoothFindDeviceClose)GetProcAddress(hBth, "BluetoothFindDeviceClose");
+
+    if (!pFindFirst || !pFindNext || !pFindClose) {
+        FreeLibrary(hBth);
+        return false;
+    }
+
+    BLUETOOTH_DEVICE_SEARCH_PARAMS sp = { sizeof(BLUETOOTH_DEVICE_SEARCH_PARAMS) };
+    sp.fReturnAuthenticated = TRUE;
+    sp.fReturnRemembered = TRUE;
+    sp.fReturnConnected = TRUE;
+    sp.fIssueInquiry = FALSE;
+    sp.hRadio = NULL;
+
+    BLUETOOTH_DEVICE_INFO di = { sizeof(BLUETOOTH_DEVICE_INFO) };
+    HBLUETOOTH_DEVICE_FIND hFind = pFindFirst(&sp, &di);
+    bool isConnected = false;
+
+    if (hFind) {
+        do {
+            if (di.fConnected) {
+                QString name = QString::fromWCharArray(di.szName);
+                if (name.contains("AirPods", Qt::CaseInsensitive)) {
+                    isConnected = true;
+                    break;
+                }
+            }
+        } while (pFindNext(hFind, &di));
+        pFindClose(hFind);
+    }
+
+    FreeLibrary(hBth);
+    return isConnected;
+}
 #endif
 
 using namespace AirpodsTrayApp::Enums;
@@ -78,6 +176,20 @@ public:
         connect(trayManager, &TrayIconManager::notificationsEnabledChanged, this, &AirPodsTrayApp::saveNotificationsEnabled);
         connect(trayManager, &TrayIconManager::notificationsEnabledChanged, this, &AirPodsTrayApp::notificationsEnabledChanged);
 
+        // Load saved preferences into deviceInfo
+        m_deviceInfo->setNoiseControlMode(loadSavedNoiseControlMode());
+        trayManager->updateNoiseControlState(m_deviceInfo->noiseControlMode());
+
+        m_deviceInfo->setConversationalAwareness(m_settings->value("device/conversationalAwareness", false).toBool());
+        m_deviceInfo->setAdaptiveNoiseLevel(m_settings->value("device/adaptiveNoiseLevel", 50).toInt());
+        m_deviceInfo->setHearingAidEnabled(m_settings->value("device/hearingAidEnabled", false).toBool());
+        m_deviceInfo->setOneBudANCMode(m_settings->value("device/oneBudANCMode", false).toBool());
+        m_deviceInfo->getSpatialTracker()->setEnabled(m_settings->value("spatial/enabled", false).toBool());
+
+        connect(m_deviceInfo->getSpatialTracker(), &SpatialAudioTracker::enabledChanged, this, [this](bool enabled) {
+            m_settings->setValue("spatial/enabled", enabled);
+        });
+
         // Initialize MediaController and connect signals
         mediaController = new MediaController(this);
         connect(mediaController, &MediaController::mediaStateChanged, this, &AirPodsTrayApp::handleMediaStateChange);
@@ -89,6 +201,12 @@ public:
 
         connect(m_bleManager, &BleManager::deviceFound, this, &AirPodsTrayApp::bleDeviceFound);
         connect(m_deviceInfo->getBattery(), &Battery::primaryChanged, this, &AirPodsTrayApp::primaryChanged);
+        connect(m_deviceInfo->getSpatialTracker(), &SpatialAudioTracker::sendPacketRequested, this, [this](const QByteArray &packet) {
+            if (!areAirpodsConnected()) {
+                return;
+            }
+            writePacketToSocket(packet, "Spatial Audio packet written: ");
+        });
         
 #ifdef Q_OS_LINUX
         connect(m_systemSleepMonitor, &SystemSleepMonitor::systemGoingToSleep, this, &AirPodsTrayApp::onSystemGoingToSleep);
@@ -113,6 +231,7 @@ public:
         monitor->checkAlreadyConnectedDevices();
         LOG_INFO("AirPodsTrayApp initialized");
 
+#ifndef Q_OS_WIN
         QBluetoothLocalDevice localDevice;
 
         const QList<QBluetoothAddress> connectedDevices = localDevice.connectedDevices();
@@ -132,20 +251,41 @@ public:
                 return;
             }
         }
+#endif
 
         initializeDBus();
         initializeBluetooth();
+
+#ifdef Q_OS_WIN
+        m_magicAapPollTimer = new QTimer(this);
+        connect(m_magicAapPollTimer, &QTimer::timeout, this, &AirPodsTrayApp::checkBluetoothConnection);
+        m_magicAapPollTimer->start(2000);
+        checkBluetoothConnection();
+#endif
     }
 
     ~AirPodsTrayApp() {
         saveCrossDeviceEnabled();
         saveEarDetectionSettings();
 
+#ifdef Q_OS_WIN
+        if (m_magicAapPollTimer) {
+            m_magicAapPollTimer->stop();
+        }
+        closeMagicAap();
+#endif
+
         delete socket;
         delete phoneSocket;
     }
 
-    bool areAirpodsConnected() const { return socket && socket->isOpen() && socket->state() == QBluetoothSocket::SocketState::ConnectedState; }
+    bool areAirpodsConnected() const {
+#ifdef Q_OS_WIN
+        if (m_hMagicAap != INVALID_HANDLE_VALUE) return true;
+        if (m_isAirPodsConnectedFallback) return true;
+#endif
+        return socket && socket->isOpen() && socket->state() == QBluetoothSocket::SocketState::ConnectedState;
+    }
     int earDetectionBehavior() const { return mediaController->getEarDetectionBehavior(); }
     bool crossDeviceEnabled() const { return CrossDevice.isEnabled; }
     AutoStartManager *autoStartManager() const { return m_autoStartManager; }
@@ -206,14 +346,13 @@ public slots:
 
     void setNoiseControlMode(NoiseControlMode mode)
     {
-        if (m_deviceInfo->noiseControlMode() == mode)
-        {
-            LOG_INFO("Noise control mode is already set to: " << static_cast<int>(mode));
-            return;
-        }
         LOG_INFO("Setting noise control mode to: " << mode);
+        saveNoiseControlMode(mode);
         QByteArray packet = AirPodsPackets::NoiseControl::getPacketForMode(mode);
-        writePacketToSocket(packet, "Noise control mode packet written: ");
+        if (writePacketToSocket(packet, "Noise control mode packet written: "))
+        {
+            m_deviceInfo->setNoiseControlMode(mode);
+        }
     }
     void setNoiseControlModeInt(int mode)
     {
@@ -228,6 +367,7 @@ public slots:
     void setConversationalAwareness(bool enabled)
     {
         LOG_INFO("Setting conversational awareness to: " << (enabled ? "enabled" : "disabled"));
+        m_settings->setValue("device/conversationalAwareness", enabled);
         QByteArray packet = enabled ? AirPodsPackets::ConversationalAwareness::ENABLED
                                     : AirPodsPackets::ConversationalAwareness::DISABLED;
 
@@ -237,13 +377,8 @@ public slots:
 
     void setOneBudANCMode(bool enabled)
     {
-        if (m_deviceInfo->oneBudANCMode() == enabled)
-        {
-            LOG_INFO("One Bud ANC mode is already " << (enabled ? "enabled" : "disabled"));
-            return;
-        }
-
         LOG_INFO("Setting One Bud ANC mode to: " << (enabled ? "enabled" : "disabled"));
+        m_settings->setValue("device/oneBudANCMode", enabled);
         QByteArray packet = enabled ? AirPodsPackets::OneBudANCMode::ENABLED
                                     : AirPodsPackets::OneBudANCMode::DISABLED;
 
@@ -254,6 +389,7 @@ public slots:
         else
         {
             LOG_ERROR("Failed to send One Bud ANC mode command: socket not open");
+            m_deviceInfo->setOneBudANCMode(enabled);
         }
     }
 
@@ -282,12 +418,11 @@ public slots:
     void setAdaptiveNoiseLevel(int level)
     {
         level = qBound(0, level, 100);
-        if (m_deviceInfo->adaptiveNoiseLevel() != level && m_deviceInfo->adaptiveModeActive())
-        {
-            QByteArray packet = AirPodsPackets::AdaptiveNoise::getPacket(level);
-            writePacketToSocket(packet, "Adaptive noise level packet written: ");
-            m_deviceInfo->setAdaptiveNoiseLevel(level);
-        }
+        LOG_INFO("Setting adaptive noise level to: " << level);
+        m_settings->setValue("device/adaptiveNoiseLevel", level);
+        QByteArray packet = AirPodsPackets::AdaptiveNoise::getPacket(level);
+        writePacketToSocket(packet, "Adaptive noise level packet written: ");
+        m_deviceInfo->setAdaptiveNoiseLevel(level);
     }
 
     void renameAirPods(const QString &newName)
@@ -395,6 +530,7 @@ public slots:
     void setHearingAidEnabled(bool enabled)
     {
         LOG_INFO("Setting hearing aid to: " << (enabled ? "enabled" : "disabled"));
+        m_settings->setValue("device/hearingAidEnabled", enabled);
         QByteArray packet = enabled ? AirPodsPackets::HearingAid::ENABLED
                                     : AirPodsPackets::HearingAid::DISABLED;
 
@@ -404,6 +540,32 @@ public slots:
 
     bool writePacketToSocket(const QByteArray &packet, const QString &logMessage)
     {
+#ifdef Q_OS_WIN
+        if (ensureMagicAapOpen())
+        {
+            OVERLAPPED ov = {0};
+            ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+            DWORD written = 0;
+            BOOL ok = WriteFile(m_hMagicAap, packet.constData(), static_cast<DWORD>(packet.size()), &written, &ov);
+            if (!ok && GetLastError() == ERROR_IO_PENDING)
+            {
+                GetOverlappedResult(m_hMagicAap, &ov, &written, TRUE);
+            }
+            CloseHandle(ov.hEvent);
+
+            if (written == static_cast<DWORD>(packet.size()))
+            {
+                LOG_INFO("MagicAAP write: " << logMessage << packet.toHex());
+                return true;
+            }
+            else
+            {
+                LOG_ERROR("MagicAAP WriteFile failed: " << GetLastError());
+                closeMagicAap();
+            }
+        }
+#endif
+
         if (socket && socket->isOpen())
         {
             socket->write(packet);
@@ -412,7 +574,7 @@ public slots:
         }
         else
         {
-            LOG_ERROR("Socket is not open, cannot write packet");
+            LOG_ERROR("Socket/MagicAAP is not open, cannot write packet");
             return false;
         }
     }
@@ -428,6 +590,78 @@ public slots:
 
     int loadRetryAttempts() const { return m_settings->value("bluetooth/retryAttempts", 3).toInt(); }
     void saveRetryAttempts(int attempts) { m_settings->setValue("bluetooth/retryAttempts", attempts); }
+
+    NoiseControlMode loadSavedNoiseControlMode() const
+    {
+        int mode = m_settings->value("device/noiseControlMode", static_cast<int>(NoiseControlMode::NoiseCancellation)).toInt();
+        if (mode < static_cast<int>(NoiseControlMode::MinValue) || mode > static_cast<int>(NoiseControlMode::MaxValue))
+        {
+            mode = static_cast<int>(NoiseControlMode::NoiseCancellation);
+        }
+        return static_cast<NoiseControlMode>(mode);
+    }
+    void saveNoiseControlMode(NoiseControlMode mode)
+    {
+        m_settings->setValue("device/noiseControlMode", static_cast<int>(mode));
+    }
+
+    Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height)
+    {
+        if (width >= 200 && height >= 200)
+        {
+            m_settings->setValue("window/x", x);
+            m_settings->setValue("window/y", y);
+            m_settings->setValue("window/width", width);
+            m_settings->setValue("window/height", height);
+        }
+    }
+
+    Q_INVOKABLE int windowWidth() const { return m_settings->value("window/width", 420).toInt(); }
+    Q_INVOKABLE int windowHeight() const { return m_settings->value("window/height", 580).toInt(); }
+    Q_INVOKABLE int windowX() const { return m_settings->value("window/x", -1).toInt(); }
+    Q_INVOKABLE int windowY() const { return m_settings->value("window/y", -1).toInt(); }
+
+    void restoreSavedPreferences()
+    {
+        NoiseControlMode savedMode = loadSavedNoiseControlMode();
+        LOG_INFO("Restoring saved noise control mode: " << savedMode);
+        QByteArray noisePacket = AirPodsPackets::NoiseControl::getPacketForMode(savedMode);
+        writePacketToSocket(noisePacket, "Restoring Noise control mode packet: ");
+        m_deviceInfo->setNoiseControlMode(savedMode);
+
+        bool savedCA = m_settings->value("device/conversationalAwareness", false).toBool();
+        LOG_INFO("Restoring saved conversational awareness: " << (savedCA ? "enabled" : "disabled"));
+        QByteArray caPacket = savedCA ? AirPodsPackets::ConversationalAwareness::ENABLED
+                                      : AirPodsPackets::ConversationalAwareness::DISABLED;
+        writePacketToSocket(caPacket, "Restoring Conversational awareness packet: ");
+        m_deviceInfo->setConversationalAwareness(savedCA);
+
+        int savedNoiseLevel = m_settings->value("device/adaptiveNoiseLevel", 50).toInt();
+        LOG_INFO("Restoring saved adaptive noise level: " << savedNoiseLevel);
+        QByteArray adaptivePacket = AirPodsPackets::AdaptiveNoise::getPacket(savedNoiseLevel);
+        writePacketToSocket(adaptivePacket, "Restoring Adaptive noise level packet: ");
+        m_deviceInfo->setAdaptiveNoiseLevel(savedNoiseLevel);
+
+        bool savedHearingAid = m_settings->value("device/hearingAidEnabled", false).toBool();
+        LOG_INFO("Restoring saved hearing aid: " << (savedHearingAid ? "enabled" : "disabled"));
+        QByteArray haPacket = savedHearingAid ? AirPodsPackets::HearingAid::ENABLED
+                                              : AirPodsPackets::HearingAid::DISABLED;
+        writePacketToSocket(haPacket, "Restoring Hearing aid packet: ");
+        m_deviceInfo->setHearingAidEnabled(savedHearingAid);
+
+        bool savedOneBud = m_settings->value("device/oneBudANCMode", false).toBool();
+        LOG_INFO("Restoring saved One Bud ANC mode: " << (savedOneBud ? "enabled" : "disabled"));
+        QByteArray oneBudPacket = savedOneBud ? AirPodsPackets::OneBudANCMode::ENABLED
+                                              : AirPodsPackets::OneBudANCMode::DISABLED;
+        writePacketToSocket(oneBudPacket, "Restoring One Bud ANC mode packet: ");
+        m_deviceInfo->setOneBudANCMode(savedOneBud);
+
+        bool savedSpatial = m_settings->value("spatial/enabled", false).toBool();
+        if (savedSpatial) {
+            LOG_INFO("Restoring saved spatial tracking: enabled");
+            m_deviceInfo->getSpatialTracker()->setEnabled(true);
+        }
+    }
 
     void onSystemGoingToSleep()
     {
@@ -530,6 +764,14 @@ private slots:
 
         // Clear the device name and model
         m_deviceInfo->reset();
+        if (mediaController)
+        {
+            mediaController->resetConversationalAwareness();
+        }
+        if (m_deviceInfo && m_deviceInfo->getSpatialTracker())
+        {
+            m_deviceInfo->getSpatialTracker()->setConnected(false);
+        }
         m_bleManager->startScan();
         emit airPodsStatusChanged();
 
@@ -638,6 +880,10 @@ private slots:
             QMetaObject::invokeMethod(this, "parseData", Qt::QueuedConnection, Q_ARG(QByteArray, data));
             QMetaObject::invokeMethod(this, "relayPacketToPhone", Qt::QueuedConnection, Q_ARG(QByteArray, data)); });
             sendHandshake();
+            m_initialSyncInProgress = true;
+            QTimer::singleShot(1500, this, [this]() {
+                m_initialSyncInProgress = false;
+            });
         };
 
         // Error handler with retry
@@ -681,6 +927,10 @@ private slots:
         {
             writePacketToSocket(AirPodsPackets::Connection::REQUEST_NOTIFICATIONS, "Request notifications packet written: ");
 
+            QTimer::singleShot(600, this, [this]() {
+                restoreSavedPreferences();
+            });
+
             QTimer::singleShot(2000, this, [this]() {
                 if (m_deviceInfo->batteryStatus().isEmpty()) {
                     writePacketToSocket(AirPodsPackets::Connection::REQUEST_NOTIFICATIONS, "Request notifications packet written: ");
@@ -704,16 +954,36 @@ private slots:
         else if (data.startsWith(AirPodsPackets::ConversationalAwareness::HEADER)) {
             if (auto result = AirPodsPackets::ConversationalAwareness::parseState(data))
             {
-                m_deviceInfo->setConversationalAwareness(result.value());
-                LOG_INFO("Conversational awareness state received: " << m_deviceInfo->conversationalAwareness());
+                bool reported = result.value();
+                bool saved = m_settings->value("device/conversationalAwareness", false).toBool();
+                LOG_INFO("Conversational awareness state received: " << reported << " (saved: " << saved << ")");
+                if (reported != saved)
+                {
+                    LOG_INFO("AirPods CA state differs from saved preference, enforcing saved preference (" << saved << ")");
+                    setConversationalAwareness(saved);
+                }
+                else
+                {
+                    m_deviceInfo->setConversationalAwareness(reported);
+                }
             }
         }
         // Hearing Aid state
         else if (data.startsWith(AirPodsPackets::HearingAid::HEADER)) {
             if (auto result = AirPodsPackets::HearingAid::parseState(data))
             {
-                m_deviceInfo->setHearingAidEnabled(result.value());
-                LOG_INFO("Hearing aid state received: " << m_deviceInfo->hearingAidEnabled());
+                bool reported = result.value();
+                bool saved = m_settings->value("device/hearingAidEnabled", false).toBool();
+                LOG_INFO("Hearing aid state received: " << reported << " (saved: " << saved << ")");
+                if (reported != saved)
+                {
+                    LOG_INFO("AirPods Hearing Aid state differs from saved preference, enforcing saved preference (" << saved << ")");
+                    setHearingAidEnabled(saved);
+                }
+                else
+                {
+                    m_deviceInfo->setHearingAidEnabled(reported);
+                }
             }
         }
         // Noise Control Mode
@@ -721,8 +991,26 @@ private slots:
         {
             if (auto value = AirPodsPackets::NoiseControl::parseMode(data))
             {
-                m_deviceInfo->setNoiseControlMode(value.value());
-                LOG_INFO("Noise control mode received: " << m_deviceInfo->noiseControlMode());
+                NoiseControlMode reported = value.value();
+                LOG_INFO("Noise control mode received: " << reported);
+                if (m_initialSyncInProgress)
+                {
+                    NoiseControlMode saved = loadSavedNoiseControlMode();
+                    if (reported != saved)
+                    {
+                        LOG_INFO("Initial sync: AirPods mode (" << reported << ") differs from saved preference (" << saved << "), enforcing saved preference");
+                        setNoiseControlMode(saved);
+                    }
+                    else
+                    {
+                        m_deviceInfo->setNoiseControlMode(reported);
+                    }
+                }
+                else
+                {
+                    m_deviceInfo->setNoiseControlMode(reported);
+                    saveNoiseControlMode(reported);
+                }
             }
         }
         // Ear Detection
@@ -744,6 +1032,11 @@ private slots:
             LOG_INFO("Received conversational awareness data");
             mediaController->handleConversationalAwareness(data);
         }
+        // Spatial Audio / Head Tracking Data
+        else if (data.startsWith(AirPodsPackets::Parse::SPATIAL_AUDIO))
+        {
+            m_deviceInfo->getSpatialTracker()->parsePacket(data);
+        }
         else if (data.startsWith(AirPodsPackets::Parse::METADATA))
         {
             parseMetadata(data);
@@ -759,8 +1052,18 @@ private slots:
         else if (data.startsWith(AirPodsPackets::OneBudANCMode::HEADER)) {
             if (auto value = AirPodsPackets::OneBudANCMode::parseState(data))
             {
-                m_deviceInfo->setOneBudANCMode(value.value());
-                LOG_INFO("One Bud ANC mode received: " << m_deviceInfo->oneBudANCMode());
+                bool reported = value.value();
+                bool saved = m_settings->value("device/oneBudANCMode", false).toBool();
+                LOG_INFO("One Bud ANC mode received: " << reported << " (saved: " << saved << ")");
+                if (reported != saved)
+                {
+                    LOG_INFO("AirPods One Bud ANC state differs from saved preference, enforcing saved preference (" << saved << ")");
+                    setOneBudANCMode(saved);
+                }
+                else
+                {
+                    m_deviceInfo->setOneBudANCMode(reported);
+                }
             }
         }
         else
@@ -886,12 +1189,26 @@ private slots:
 
     void bleDeviceFound(const BleInfo &device)
     {
-        if (BLEUtils::isValidIrkRpa(m_deviceInfo->magicAccIRK(), device.address)) {
-            m_deviceInfo->setModel(device.modelName);
-            auto decryptet = BLEUtils::decryptLastBytes(device.encryptedPayload, m_deviceInfo->magicAccEncKey());
-            m_deviceInfo->getBattery()->parseEncryptedPacket(decryptet, device.primaryLeft, device.isThisPodInTheCase, isModelHeadset(m_deviceInfo->model()));
-            m_deviceInfo->getEarDetection()->overrideEarDetectionStatus(device.isPrimaryInEar, device.isSecondaryInEar);
+        if (m_deviceInfo->magicAccIRK().isEmpty() || !BLEUtils::isValidIrkRpa(m_deviceInfo->magicAccIRK(), device.address)) {
+            if (device.modelName != AirPodsModel::Unknown) {
+                m_deviceInfo->setModel(device.modelName);
+            }
+            if (device.leftPodBattery >= 0 || device.rightPodBattery >= 0 || device.caseBattery >= 0) {
+                m_deviceInfo->getBattery()->updateFromBleRaw(
+                    device.leftPodBattery, device.leftCharging,
+                    device.rightPodBattery, device.rightCharging,
+                    device.caseBattery, device.caseCharging,
+                    device.primaryLeft
+                );
+                m_deviceInfo->updateBatteryStatus();
+            }
+            return;
         }
+
+        m_deviceInfo->setModel(device.modelName);
+        auto decryptet = BLEUtils::decryptLastBytes(device.encryptedPayload, m_deviceInfo->magicAccEncKey());
+        m_deviceInfo->getBattery()->parseEncryptedPacket(decryptet, device.primaryLeft, device.isThisPodInTheCase, isModelHeadset(m_deviceInfo->model()));
+        m_deviceInfo->getEarDetection()->overrideEarDetectionStatus(device.isPrimaryInEar, device.isSecondaryInEar);
     }
 
 public:
@@ -923,6 +1240,7 @@ public:
     }
 
     void connectToAirPods(bool force) {
+#ifndef Q_OS_WIN
         if (socket && socket->isOpen()) {
             LOG_INFO("Already connected to AirPods");
             return;
@@ -947,6 +1265,9 @@ public:
             }
         }
         LOG_WARN("AirPods not found among connected devices");
+#else
+        Q_UNUSED(force);
+#endif
     }
 
     void initializeBluetooth() {
@@ -959,7 +1280,15 @@ public:
     }
 
     void loadMainModule() {
-        parent->load(QUrl(QStringLiteral("qrc:/qt/qml/windows/Main.qml")));
+        parent->load(QUrl(QStringLiteral("qrc:/windows/Main.qml")));
+        if (!parent->rootObjects().isEmpty()) {
+            QQuickWindow *window = qobject_cast<QQuickWindow *>(parent->rootObjects().first());
+            if (window) {
+                window->show();
+                window->raise();
+                window->requestActivate();
+            }
+        }
     }
 
     void reopenOrLoadModule(const QString &pageToLoad = "app") {
@@ -972,6 +1301,246 @@ public:
         QObject *rootObject = parent->rootObjects().first();
         QMetaObject::invokeMethod(rootObject, "reopen", Q_ARG(QVariant, pageToLoad));
     }
+
+#ifdef Q_OS_WIN
+    bool writeMagicAapRaw(const void *data, DWORD size)
+    {
+        if (m_hMagicAap == INVALID_HANDLE_VALUE) return false;
+        OVERLAPPED ov = {0};
+        ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+        DWORD written = 0;
+        BOOL ok = WriteFile(m_hMagicAap, data, size, &written, &ov);
+        if (!ok && GetLastError() == ERROR_IO_PENDING)
+        {
+            GetOverlappedResult(m_hMagicAap, &ov, &written, TRUE);
+        }
+        CloseHandle(ov.hEvent);
+        return (written == size);
+    }
+
+    void closeMagicAap()
+    {
+        m_initialSyncInProgress = true;
+        m_magicAapRunning = false;
+        if (m_hMagicAap != INVALID_HANDLE_VALUE)
+        {
+            CancelIoEx(m_hMagicAap, NULL);
+        }
+        if (m_magicAapThread.joinable())
+        {
+            m_magicAapThread.join();
+        }
+        if (m_hMagicAap != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(m_hMagicAap);
+            m_hMagicAap = INVALID_HANDLE_VALUE;
+        }
+        if (mediaController)
+        {
+            mediaController->resetConversationalAwareness();
+        }
+        if (m_deviceInfo && m_deviceInfo->getSpatialTracker())
+        {
+            m_deviceInfo->getSpatialTracker()->setConnected(false);
+        }
+    }
+
+    bool ensureMagicAapOpen()
+    {
+        // Don't open or hold the driver handle if AirPods are not actively connected to Windows
+        if (!IsAirPodsConnectedWin32())
+        {
+            if (m_hMagicAap != INVALID_HANDLE_VALUE)
+            {
+                LOG_INFO("AirPods disconnected in Windows Bluetooth, closing MagicAAP handle to release device");
+                closeMagicAap();
+            }
+            return false;
+        }
+
+        if (m_hMagicAap != INVALID_HANDLE_VALUE)
+        {
+            return true;
+        }
+
+        if (m_magicAapThread.joinable())
+        {
+            m_magicAapRunning = false;
+            m_magicAapThread.join();
+        }
+
+        std::vector<std::wstring> paths = GetMagicAapInterfaces(GUID_DEVINTERFACE_MAGICAAP);
+        if (paths.empty())
+        {
+            paths = GetMagicAapInterfaces(GUID_DEVINTERFACE_AAP_SERVER);
+        }
+        if (paths.empty())
+        {
+            return false;
+        }
+
+        LOG_INFO("MagicAAP device interface found: " << QString::fromStdWString(paths[0]));
+        m_hMagicAap = CreateFileW(paths[0].c_str(),
+                                  GENERIC_READ | GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  NULL,
+                                  OPEN_EXISTING,
+                                  FILE_FLAG_OVERLAPPED,
+                                  NULL);
+
+        if (m_hMagicAap == INVALID_HANDLE_VALUE)
+        {
+            DWORD err = GetLastError();
+            LOG_DEBUG("MagicAAP handle not ready yet. Win32 Error: " << err);
+            return false;
+        }
+
+        LOG_INFO("MagicAAP handle opened successfully!");
+        m_initialSyncInProgress = true;
+        if (m_deviceInfo && m_deviceInfo->getSpatialTracker())
+        {
+            m_deviceInfo->getSpatialTracker()->setConnected(true);
+        }
+
+        // Send AAP Handshake
+        static const BYTE Handshake[] = {
+            0x00, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        };
+        writeMagicAapRaw(Handshake, sizeof(Handshake));
+
+        // Send feature notification requests
+        writeMagicAapRaw(AirPodsPackets::Connection::SET_SPECIFIC_FEATURES.constData(),
+                         static_cast<DWORD>(AirPodsPackets::Connection::SET_SPECIFIC_FEATURES.size()));
+        writeMagicAapRaw(AirPodsPackets::Connection::REQUEST_NOTIFICATIONS.constData(),
+                         static_cast<DWORD>(AirPodsPackets::Connection::REQUEST_NOTIFICATIONS.size()));
+
+        // Restore saved preferences after handshake
+        QTimer::singleShot(600, this, [this]() {
+            restoreSavedPreferences();
+        });
+
+        // Conclude initial sync window after 1.5s
+        QTimer::singleShot(1500, this, [this]() {
+            m_initialSyncInProgress = false;
+            LOG_INFO("Initial connection sync completed, saved preferences active");
+        });
+
+        m_deviceInfo->setBluetoothAddress("34:0E:22:56:BA:38");
+        mediaController->setConnectedDeviceMacAddress("34_0E_22_56_BA_38");
+
+        if (m_deviceInfo->deviceName().isEmpty())
+        {
+            m_deviceInfo->setDeviceName("AirPods Pro");
+            if (m_deviceInfo->model() == AirPodsModel::Unknown) {
+                m_deviceInfo->setModel(AirPodsModel::AirPodsPro2USBC);
+            }
+        }
+
+        m_isAirPodsConnectedFallback = true;
+        emit airPodsStatusChanged();
+
+        // Start background reader thread with non-blocking overlapped I/O
+        m_magicAapRunning = true;
+        m_magicAapThread = std::thread([this]() {
+            BYTE buf[1024];
+            OVERLAPPED ov = {0};
+            ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+
+            while (m_magicAapRunning && m_hMagicAap != INVALID_HANDLE_VALUE)
+            {
+                ResetEvent(ov.hEvent);
+                DWORD bytesRead = 0;
+                BOOL ok = ReadFile(m_hMagicAap, buf, sizeof(buf), &bytesRead, &ov);
+                if (!ok)
+                {
+                    DWORD err = GetLastError();
+                    if (err == ERROR_IO_PENDING)
+                    {
+                        bool gotData = false;
+                        while (m_magicAapRunning && m_hMagicAap != INVALID_HANDLE_VALUE)
+                        {
+                            DWORD waitRes = WaitForSingleObject(ov.hEvent, 200);
+                            if (waitRes == WAIT_OBJECT_0)
+                            {
+                                if (m_hMagicAap != INVALID_HANDLE_VALUE && GetOverlappedResult(m_hMagicAap, &ov, &bytesRead, FALSE))
+                                {
+                                    gotData = true;
+                                }
+                                break;
+                            }
+                        }
+                        if (!gotData) continue;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                if (bytesRead > 0)
+                {
+                    QByteArray data(reinterpret_cast<const char*>(buf), static_cast<int>(bytesRead));
+                    QMetaObject::invokeMethod(this, [this, data]() {
+                        parseData(data);
+                    }, Qt::QueuedConnection);
+                }
+            }
+
+            if (ov.hEvent)
+            {
+                CloseHandle(ov.hEvent);
+            }
+            m_magicAapRunning = false;
+        });
+
+        return true;
+    }
+
+    void checkBluetoothConnection()
+    {
+        bool isConnected = IsAirPodsConnectedWin32();
+        if (!isConnected)
+        {
+            if (m_hMagicAap != INVALID_HANDLE_VALUE)
+            {
+                LOG_INFO("AirPods disconnected, releasing MagicAAP handle");
+                closeMagicAap();
+            }
+            if (m_isAirPodsConnectedFallback)
+            {
+                m_isAirPodsConnectedFallback = false;
+                emit airPodsStatusChanged();
+            }
+            return;
+        }
+
+        if (ensureMagicAapOpen())
+        {
+            if (!m_isAirPodsConnectedFallback)
+            {
+                m_isAirPodsConnectedFallback = true;
+                emit airPodsStatusChanged();
+            }
+            return;
+        }
+
+        if (!m_isAirPodsConnectedFallback)
+        {
+            LOG_INFO("AirPods detected as connected in Windows Bluetooth!");
+            m_isAirPodsConnectedFallback = true;
+            if (m_deviceInfo->deviceName().isEmpty())
+            {
+                m_deviceInfo->setDeviceName("AirPods Pro");
+                m_deviceInfo->setBluetoothAddress("34:0E:22:56:BA:38");
+                if (m_deviceInfo->model() == AirPodsModel::Unknown) {
+                    m_deviceInfo->setModel(AirPodsModel::AirPodsPro2USBC);
+                }
+            }
+            emit airPodsStatusChanged();
+        }
+    }
+#endif
 
 signals:
     void noiseControlModeChanged(NoiseControlMode mode);
@@ -1009,8 +1578,14 @@ private:
     SystemSleepMonitor *m_systemSleepMonitor = nullptr;
 #elif defined(Q_OS_WIN)
     WindowsSleepMonitor *m_systemSleepMonitor = nullptr;
+    HANDLE m_hMagicAap = INVALID_HANDLE_VALUE;
+    std::thread m_magicAapThread;
+    std::atomic<bool> m_magicAapRunning{false};
+    QTimer *m_magicAapPollTimer = nullptr;
+    bool m_isAirPodsConnectedFallback = false;
 #endif
     QString m_phoneMacStatus;
+    bool m_initialSyncInProgress = true;
 };
 
 int main(int argc, char *argv[]) {
@@ -1041,31 +1616,20 @@ int main(int argc, char *argv[]) {
         fflush(output);
     });
 
-    QSharedMemory sharedMemory;
-    sharedMemory.setKey("TcpServer-Key2");
-
-    // Check if app is already open
-    if(sharedMemory.create(1) == false)
+    // Check if app is already open via IPC socket
     {
-        LOG_INFO("Another instance already running! Opening App Window Instead");
         QLocalSocket socket;
-        // Connect to the original app, then trigger the reopen signal
         socket.connectToServer("app_server");
         if (socket.waitForConnected(500)) {
+            LOG_INFO("Another instance already running! Opening App Window Instead");
             socket.write("reopen");
             socket.flush();
             socket.waitForBytesWritten(500);
             socket.disconnectFromServer();
-            app.exit(); // exit; process already running
             return 0;
         }
-        else
-        {
-            // Failed connection, log and open the app (assume it's not running)
-            LOG_ERROR("Failed to connect to the original app instance. Assuming it is not running.");
-            LOG_DEBUG("Socket error: " << socket.errorString());
-        }
     }
+    app.setApplicationName("LibrePods");
     app.setDesktopFileName("me.kavishdevar.librepods");
     app.setQuitOnLastWindowClosed(false);
 
@@ -1079,9 +1643,12 @@ int main(int argc, char *argv[]) {
             hideOnStart = true;
     }
 
+    qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
+
     QQmlApplicationEngine engine;
     qmlRegisterType<Battery>("me.kavishdevar.Battery", 1, 0, "Battery");
     qmlRegisterType<DeviceInfo>("me.kavishdevar.DeviceInfo", 1, 0, "DeviceInfo");
+    qmlRegisterType<SpatialAudioTracker>("me.kavishdevar.SpatialAudioTracker", 1, 0, "SpatialAudioTracker");
     AirPodsTrayApp *trayApp = new AirPodsTrayApp(debugMode, hideOnStart, &engine);
     engine.rootContext()->setContextProperty("airPodsTrayApp", trayApp);
 
@@ -1121,12 +1688,39 @@ int main(int argc, char *argv[]) {
     QObject::connect(&server, &QLocalServer::newConnection, [&]() {
         QLocalSocket* socket = server.nextPendingConnection();
         // Handles Proper Connection
-        QObject::connect(socket, &QLocalSocket::readyRead, [socket, &trayApp]() {
-            QString msg = socket->readAll();
-            // Check if the message is "reopen", if so, trigger onOpenApp function
+        QObject::connect(socket, &QLocalSocket::readyRead, [socket, trayApp]() {
+            QString msg = QString::fromUtf8(socket->readAll()).trimmed();
             if (msg == "reopen") {
                 LOG_INFO("Reopening app window");
                 trayApp->reopenOrLoadModule("app");
+            }
+            else if (msg == "noise:off") {
+                LOG_INFO("IPC command received: noise:off");
+                trayApp->setNoiseControlModeInt(0);
+            }
+            else if (msg == "noise:anc") {
+                LOG_INFO("IPC command received: noise:anc");
+                trayApp->setNoiseControlModeInt(1);
+            }
+            else if (msg == "noise:transparency") {
+                LOG_INFO("IPC command received: noise:transparency");
+                trayApp->setNoiseControlModeInt(2);
+            }
+            else if (msg == "noise:adaptive") {
+                LOG_INFO("IPC command received: noise:adaptive");
+                trayApp->setNoiseControlModeInt(3);
+            }
+            else if (msg == "spatial:on" || msg == "spatial:enable") {
+                LOG_INFO("IPC command received: spatial:on");
+                trayApp->deviceInfo()->getSpatialTracker()->setEnabled(true);
+            }
+            else if (msg == "spatial:off" || msg == "spatial:disable") {
+                LOG_INFO("IPC command received: spatial:off");
+                trayApp->deviceInfo()->getSpatialTracker()->setEnabled(false);
+            }
+            else if (msg == "spatial:recenter") {
+                LOG_INFO("IPC command received: spatial:recenter");
+                trayApp->deviceInfo()->getSpatialTracker()->recenter();
             }
             else
             {
@@ -1139,17 +1733,11 @@ int main(int argc, char *argv[]) {
             LOG_ERROR("Failed to connect to the duplicate app instance");
             LOG_DEBUG("Connection error: " << socket->errorString());
         });
-
-        // Handle server-level errors
-        QObject::connect(&server, &QLocalServer::serverError, [&]() {
-            LOG_ERROR("Server failed to accept a new connection");
-            LOG_DEBUG("Server error: " << server.errorString());
-        });
     });
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&]() {
         LOG_DEBUG("Application is about to quit. Cleaning up...");
-        sharedMemory.detach();
+        QLocalServer::removeServer("app_server");
     });
     return app.exec();
 }

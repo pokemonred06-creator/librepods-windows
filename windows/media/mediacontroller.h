@@ -43,6 +43,7 @@ public:
   void followMediaChanges();
   bool isActiveOutputDeviceAirPods();
   void handleConversationalAwareness(const QByteArray &data);
+  void resetConversationalAwareness();
   void activateA2dpProfile();
   void removeAudioOutputDevice();
   void setConnectedDeviceMacAddress(const QString &macAddress);

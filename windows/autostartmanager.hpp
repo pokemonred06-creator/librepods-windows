@@ -68,13 +68,8 @@ private:
     {
 #ifdef Q_OS_WIN
         QSettings settings(m_registryKey, QSettings::NativeFormat);
-        QString appPath = QCoreApplication::applicationFilePath();
-        // Add quotes around the path if it contains spaces
-        if (appPath.contains(' '))
-        {
-            appPath = "\"" + appPath + "\"";
-        }
-        appPath += " --hide";
+        QString appPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+        appPath = "\"" + appPath + "\" --hide";
         settings.setValue(m_appName, appPath);
         settings.sync();
 #else

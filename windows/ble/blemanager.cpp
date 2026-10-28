@@ -18,10 +18,12 @@ AirpodsTrayApp::Enums::AirPodsModel getModelName(quint16 modelId)
         {0x1F20, AirPodsModel::AirPodsMaxUSBC},
         {0x0E20, AirPodsModel::AirPodsPro},
         {0x1420, AirPodsModel::AirPodsPro2Lightning},
-        {0x2420, AirPodsModel::AirPodsPro2USBC}
+        {0x2420, AirPodsModel::AirPodsPro2USBC},
+        {0x2720, AirPodsModel::AirPodsPro2USBC},
+        {0x2027, AirPodsModel::AirPodsPro2USBC}
     };
 
-    return modelMap.value(modelId, AirPodsModel::Unknown);
+    return modelMap.value(modelId, AirPodsModel::AirPodsPro2USBC);
 }
 
 QString getColorName(quint8 colorId)

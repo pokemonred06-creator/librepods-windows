@@ -1,0 +1,70 @@
+;/*++
+;Module Name:
+;    MagicAAP.inx
+;
+;Abstract:
+;    INF file for installing the MagicAAP
+;
+;    devcon.exe MagicAAP.inf BTHENUM\{74ec2172-0bad-4d01-8f77-997b2be0722a}
+;
+;--*/
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=Bluetooth
+ClassGuid={e0cbf06c-cd8b-4647-bb8a-263b43f0f974}
+Provider=%ProviderString%
+DriverVer=06/06/2024,0.0.0.1
+CatalogFile=MagicAAP.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles]
+MagicAAP.sys  = 1,,
+
+;*****************************************
+; MagicAAP  Install Section
+;*****************************************
+
+[Manufacturer]
+%ManufacturerString%=MagicAAP,NTamd64.10.0.1..16299
+
+[MagicAAP.NTamd64.10.0.1..16299]
+%MagicAAP.DeviceDesc% = MagicAAP_Inst,BTHENUM\{74ec2172-0bad-4d01-8f77-997b2be0722a}
+
+[MagicAAP_Inst.NT]
+CopyFiles=DriverStore_Dir
+
+[DriverStore_Dir]
+MagicAAP.sys
+
+;-------------- Service installation
+[MagicAAP_Inst.NT.Services]
+AddService = MagicAAP,%SPSVCINST_ASSOCSERVICE%, MagicAAP_Service_Inst
+
+; -------------- MagicAAP driver install sections
+[MagicAAP_Service_Inst]
+DisplayName    = %MagicAAP.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START 
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\MagicAAP.sys
+
+[MagicAAP_Inst.NT.Wdf]
+KmdfService =  MagicAAP, MagicAAP_Inst_wdfsect
+
+[MagicAAP_Inst_wdfsect]
+KmdfLibraryVersion = 1.15
+
+[Strings]
+SPSVCINST_ASSOCSERVICE= 0x00000002
+ProviderString = "IP Maslov Alexander Yuryevich"
+ManufacturerString = "IP Maslov Alexander Yuryevich"
+DiskId1 = "MagicAAP installation disk"
+MagicAAP.DeviceDesc = "MagicAAP"
+MagicAAP.SVCDESC = "MagicAAP Bluetooth driver for MagicPods"
