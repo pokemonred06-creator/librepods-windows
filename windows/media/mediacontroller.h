@@ -86,6 +86,7 @@ private:
 #endif
   
   QString m_cachedA2dpProfile;
+  bool m_pausedByLibrePods = false;
 };
 
 #endif // MEDIACONTROLLER_H

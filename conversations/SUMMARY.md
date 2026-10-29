@@ -109,6 +109,15 @@ This document provides a structured, high-level technical overview of all develo
   - Provided automated build script build_driver.cmd and developer documentation README.md.
   - Documented WHQL Attestation Signing path to eliminate Windows Test Signing mode requirements.
 
+### Milestone 11: Windows Media Playback Control & Disconnection Auto-Pause
+- **Problem**: When disconnecting AirPods (switching to phone, placing in case, or Bluetooth disconnect) or removing earbuds, media playback continued playing out loud through computer speakers.
+- **Root Cause**: Windows media playback control was stubbed out in the original port (`LOG_DEBUG("Media playback pause not fully implemented on Windows yet")`), `PlayerStatusWatcher` was a D-Bus no-op returning empty strings, and `onDeviceDisconnected` never triggered a media pause event.
+- **Solution**:
+  - Implemented WASAPI active audio session detection (`IAudioSessionManager2` / `IAudioSessionEnumerator`) in [`WindowsAudioController::isAudioPlaying()`](file:///C:/Users/RED/.gemini/antigravity/scratch/librepod/windows/media/windowsaudiocontroller.cpp) to accurately detect when apps (Spotify, YouTube, VLC, browser) are actively rendering audio.
+  - Implemented native Windows media playback control via `VK_MEDIA_PLAY_PAUSE` keystroke simulation (`SendInput`) in [`MediaController::pause()`](file:///C:/Users/RED/.gemini/antigravity/scratch/librepod/windows/media/mediacontroller.cpp) and `play()`.
+  - Added disconnect event hooks in [`onDeviceDisconnected()`](file:///C:/Users/RED/.gemini/antigravity/scratch/librepod/windows/main.cpp) and [`closeMagicAap()`](file:///C:/Users/RED/.gemini/antigravity/scratch/librepod/windows/main.cpp) so that when AirPods disconnect while media is playing, playback is paused instantly.
+  - Connected `handleEarDetection()` so removing earbuds pauses playback and putting them back in resumes playback if previously paused by LibrePods.
+
 ---
 
 ## 4. Building and Running

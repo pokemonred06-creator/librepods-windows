@@ -7,6 +7,7 @@
 #include "pulseaudiocontroller.h"
 #elif defined(Q_OS_WIN)
 #include "windowsaudiocontroller.h"
+#include <windows.h>
 #endif
 
 #include <QDebug>
@@ -81,7 +82,12 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
     activateA2dpProfile();
 
     // Resume if conditions are met and we previously paused
-    if (shouldResume && !pausedByAppServices.isEmpty() && isActiveOutputDeviceAirPods())
+    #ifdef Q_OS_WIN
+    bool canResume = m_pausedByLibrePods;
+#else
+    bool canResume = !pausedByAppServices.isEmpty();
+#endif
+    if (shouldResume && canResume && isActiveOutputDeviceAirPods())
     {
       play();
     }
@@ -311,7 +317,15 @@ MediaController::MediaState MediaController::mediaStateFromPlayerctlOutput(
 
 MediaController::MediaState MediaController::getCurrentMediaState() const
 {
+#ifdef Q_OS_WIN
+  if (m_windowsAudio && m_windowsAudio->isAudioPlaying())
+  {
+    return MediaState::Playing;
+  }
+  return MediaState::Paused;
+#else
   return mediaStateFromPlayerctlOutput(PlayerStatusWatcher::getCurrentPlaybackStatus(""));
+#endif
 }
 
 QStringList MediaController::getPlayingMediaPlayers()
@@ -357,11 +371,31 @@ QStringList MediaController::getPlayingMediaPlayers()
 
 void MediaController::play()
 {
+#ifdef Q_OS_WIN
+  if (m_pausedByLibrePods)
+  {
+    LOG_INFO("Windows: Resuming media playback via VK_MEDIA_PLAY_PAUSE");
+    INPUT inputs[2] = {};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, inputs, sizeof(INPUT));
+    m_pausedByLibrePods = false;
+  }
+  else
+  {
+    LOG_DEBUG("Windows: play called but playback was not paused by LibrePods");
+  }
+  return;
+#else
   if (pausedByAppServices.isEmpty())
   {
     LOG_INFO("No services to resume");
     return;
   }
+#endif
 
 #ifndef Q_OS_WIN
   QDBusConnection bus = QDBusConnection::sessionBus();
@@ -411,6 +445,19 @@ void MediaController::play()
 
 void MediaController::pause()
 {
+#ifdef Q_OS_WIN
+  LOG_INFO("Windows: Pausing media playback via VK_MEDIA_PLAY_PAUSE");
+  INPUT inputs[2] = {};
+  inputs[0].type = INPUT_KEYBOARD;
+  inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+  inputs[1].type = INPUT_KEYBOARD;
+  inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+  inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+  SendInput(2, inputs, sizeof(INPUT));
+  m_pausedByLibrePods = true;
+  return;
+#endif
+
 #ifndef Q_OS_WIN
   QDBusConnection bus = QDBusConnection::sessionBus();
   QStringList services = bus.interface()->registeredServiceNames().value();

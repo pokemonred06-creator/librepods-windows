@@ -6,6 +6,7 @@
 #include <Mmdeviceapi.h>
 #include <Functiondiscoverykeys_devpkey.h>
 #include <Propvarutil.h>
+#include <audiopolicy.h>
 #endif
 
 WindowsAudioController::WindowsAudioController(QObject *parent)
@@ -303,4 +304,107 @@ bool WindowsAudioController::setDefaultAudioDevice(const QString &deviceId)
     Q_UNUSED(deviceId);
     LOG_WARN("setDefaultAudioDevice not implemented on Windows");
     return false;
+}
+
+static bool checkSessionManagerHasActiveAudio(IAudioSessionManager2 *mgr)
+{
+    if (!mgr) return false;
+    IAudioSessionEnumerator *sessionEnum = nullptr;
+    if (FAILED(mgr->GetSessionEnumerator(&sessionEnum)) || !sessionEnum)
+        return false;
+
+    int count = 0;
+    sessionEnum->GetCount(&count);
+    bool active = false;
+    for (int i = 0; i < count; i++)
+    {
+        IAudioSessionControl *ctrl = nullptr;
+        if (SUCCEEDED(sessionEnum->GetSession(i, &ctrl)) && ctrl)
+        {
+            AudioSessionState state;
+            if (SUCCEEDED(ctrl->GetState(&state)) && state == AudioSessionStateActive)
+            {
+                IAudioSessionControl2 *ctrl2 = nullptr;
+                bool isSystem = false;
+                if (SUCCEEDED(ctrl->QueryInterface(__uuidof(IAudioSessionControl2), (void**)&ctrl2)) && ctrl2)
+                {
+                    if (ctrl2->IsSystemSoundsSession() == S_OK)
+                    {
+                        isSystem = true;
+                    }
+                    ctrl2->Release();
+                }
+                if (!isSystem)
+                {
+                    active = true;
+                }
+            }
+            ctrl->Release();
+        }
+        if (active) break;
+    }
+    sessionEnum->Release();
+    return active;
+}
+
+bool WindowsAudioController::isAudioPlaying()
+{
+#ifdef Q_OS_WIN
+    if (!m_initialized || !m_deviceEnumerator)
+        return false;
+
+    // Check default audio render endpoint
+    IMMDevice *defaultDevice = nullptr;
+    HRESULT hr = m_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defaultDevice);
+    if (SUCCEEDED(hr) && defaultDevice)
+    {
+        IAudioSessionManager2 *mgr = nullptr;
+        hr = defaultDevice->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, (void**)&mgr);
+        if (SUCCEEDED(hr) && mgr)
+        {
+            if (checkSessionManagerHasActiveAudio(mgr))
+            {
+                mgr->Release();
+                defaultDevice->Release();
+                return true;
+            }
+            mgr->Release();
+        }
+        defaultDevice->Release();
+    }
+
+    // Fallback: check all active audio render endpoints in case default is switching
+    IMMDeviceCollection *deviceCollection = nullptr;
+    hr = m_deviceEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &deviceCollection);
+    if (SUCCEEDED(hr) && deviceCollection)
+    {
+        UINT count = 0;
+        deviceCollection->GetCount(&count);
+        for (UINT i = 0; i < count; i++)
+        {
+            IMMDevice *dev = nullptr;
+            if (SUCCEEDED(deviceCollection->Item(i, &dev)) && dev)
+            {
+                IAudioSessionManager2 *mgr = nullptr;
+                if (SUCCEEDED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, (void**)&mgr)) && mgr)
+                {
+                    if (checkSessionManagerHasActiveAudio(mgr))
+                    {
+                        mgr->Release();
+                        dev->Release();
+                        deviceCollection->Release();
+                        return true;
+                    }
+                    mgr->Release();
+                }
+                dev->Release();
+            }
+        }
+        deviceCollection->Release();
+    }
+
+    return false;
+#else
+    return false;
+#endif
 }

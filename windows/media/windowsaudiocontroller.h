@@ -27,6 +27,7 @@ public:
     bool setCardProfile(const QString &cardName, const QString &profileName);
     QString getCardNameForDevice(const QString &macAddress);
     bool isProfileAvailable(const QString &cardName, const QString &profileName);
+    bool isAudioPlaying();
 
 private:
 #ifdef Q_OS_WIN

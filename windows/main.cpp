@@ -766,6 +766,12 @@ private slots:
         m_deviceInfo->reset();
         if (mediaController)
         {
+            if (mediaController->getEarDetectionBehavior() != MediaController::Disabled &&
+                mediaController->getCurrentMediaState() == MediaController::Playing)
+            {
+                LOG_INFO("AirPods disconnected while media was playing; pausing playback");
+                mediaController->pause();
+            }
             mediaController->resetConversationalAwareness();
         }
         if (m_deviceInfo && m_deviceInfo->getSpatialTracker())
@@ -1510,6 +1516,15 @@ public:
             if (m_isAirPodsConnectedFallback)
             {
                 m_isAirPodsConnectedFallback = false;
+                if (mediaController)
+                {
+                    if (mediaController->getEarDetectionBehavior() != MediaController::Disabled &&
+                        mediaController->getCurrentMediaState() == MediaController::Playing)
+                    {
+                        LOG_INFO("AirPods disconnected in Bluetooth monitor while media was playing; pausing playback");
+                        mediaController->pause();
+                    }
+                }
                 emit airPodsStatusChanged();
             }
             return;
