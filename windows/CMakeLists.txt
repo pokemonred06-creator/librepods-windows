@@ -86,6 +86,7 @@ target_link_libraries(librepods-windows
     User32
     PowrProf
     Cfgmgr32
+    windowsapp
 )
 
 # Set Windows subsystem to console for debugging, change to WINDOWS for release
@@ -134,4 +135,5 @@ target_link_libraries(test-ear-detection
     Qt6::Multimedia
     Ole32
     User32
+    windowsapp
 )

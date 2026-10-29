@@ -8,6 +8,10 @@
 #elif defined(Q_OS_WIN)
 #include "windowsaudiocontroller.h"
 #include <windows.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Media.Control.h>
+#include <thread>
 #endif
 
 #include <QDebug>
@@ -447,6 +451,54 @@ QStringList MediaController::getPlayingMediaPlayers()
   return playingServices;
 }
 
+#ifdef Q_OS_WIN
+namespace {
+void sendWindowsMediaCommandAsync(bool pause)
+{
+    std::thread([pause]() {
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        } catch (...) {
+        }
+
+        bool handled = false;
+        try {
+            auto sessionManager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
+            if (sessionManager) {
+                auto currentSession = sessionManager.GetCurrentSession();
+                if (currentSession) {
+                    bool ok = pause ? currentSession.TryPauseAsync().get() : currentSession.TryPlayAsync().get();
+                    if (ok) {
+                        LOG_INFO(QString("Windows SMTC: Successfully %1 active session").arg(pause ? "paused" : "resumed"));
+                        handled = true;
+                    }
+                }
+                if (!handled) {
+                    auto sessions = sessionManager.GetSessions();
+                    for (uint32_t i = 0; i < sessions.Size(); ++i) {
+                        auto session = sessions.GetAt(i);
+                        bool ok = pause ? session.TryPauseAsync().get() : session.TryPlayAsync().get();
+                        if (ok) {
+                            LOG_INFO(QString("Windows SMTC: Successfully %1 session %2").arg(pause ? "paused" : "resumed").arg(i));
+                            handled = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (...) {
+            LOG_DEBUG("Windows SMTC exception, attempting keyboard fallback");
+        }
+
+        if (!handled) {
+            keybd_event(VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY, 0);
+            keybd_event(VK_MEDIA_PLAY_PAUSE, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
+        }
+    }).detach();
+}
+}
+#endif
+
 void MediaController::play()
 {
 #ifdef Q_OS_WIN
@@ -515,41 +567,19 @@ void MediaController::play()
     LOG_ERROR("Failed to resume any media players via DBus");
   }
 #else
-  LOG_INFO("Windows: Resuming media playback via VK_MEDIA_PLAY_PAUSE");
-  INPUT inputs[2] = {};
-  inputs[0].type = INPUT_KEYBOARD;
-  inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-  inputs[0].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
-  inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-
-  inputs[1].type = INPUT_KEYBOARD;
-  inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-  inputs[1].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
-  inputs[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
-
-  SendInput(2, inputs, sizeof(INPUT));
+  LOG_INFO("Windows: Resuming media playback");
   m_pausedByLibrePods = false;
   pausedByAppServices.clear();
+  sendWindowsMediaCommandAsync(false);
 #endif
 }
 
 void MediaController::pause()
 {
 #ifdef Q_OS_WIN
-  LOG_INFO("Windows: Pausing media playback via VK_MEDIA_PLAY_PAUSE");
-  INPUT inputs[2] = {};
-  inputs[0].type = INPUT_KEYBOARD;
-  inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-  inputs[0].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
-  inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-
-  inputs[1].type = INPUT_KEYBOARD;
-  inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-  inputs[1].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
-  inputs[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
-
-  SendInput(2, inputs, sizeof(INPUT));
+  LOG_INFO("Windows: Pausing media playback");
   m_pausedByLibrePods = true;
+  sendWindowsMediaCommandAsync(true);
   return;
 #endif
 
