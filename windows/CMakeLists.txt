@@ -110,3 +110,28 @@ target_link_libraries(librepods-ctl
 install(TARGETS librepods-ctl
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+qt_add_executable(test-ear-detection
+    tests/test_ear_detection.cpp
+    media/mediacontroller.cpp
+    media/mediacontroller.h
+    media/windowsaudiocontroller.cpp
+    media/windowsaudiocontroller.h
+    media/playerstatuswatcher.cpp
+    media/playerstatuswatcher.h
+    logger.h
+    enums.h
+    eardetection.hpp
+)
+target_include_directories(test-ear-detection
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(test-ear-detection
+    PRIVATE
+    Qt6::Core
+    Qt6::Network
+    Qt6::Multimedia
+    Ole32
+    User32
+)
