@@ -126,7 +126,7 @@ void BleManager::onDeviceDiscovered(const QBluetoothDeviceInfo &info)
     {
         QByteArray data = info.manufacturerData().value(0x004C);
         // Ensure data is long enough and starts with prefix 0x07 (indicates Proximity Pairing Message)
-        if (data.size() >= 10 && data[0] == 0x07)
+        if (data.size() >= 27 && static_cast<quint8>(data[0]) == 0x07)
         {
             QString address = info.address().toString();
             BleInfo deviceInfo;

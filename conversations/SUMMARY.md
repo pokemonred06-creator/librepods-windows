@@ -118,6 +118,17 @@ This document provides a structured, high-level technical overview of all develo
   - Added disconnect event hooks in [`onDeviceDisconnected()`](file:///C:/Users/RED/.gemini/antigravity/scratch/librepod/windows/main.cpp) and [`closeMagicAap()`](file:///C:/Users/RED/.gemini/antigravity/scratch/librepod/windows/main.cpp) so that when AirPods disconnect while media is playing, playback is paused instantly.
   - Connected `handleEarDetection()` so removing earbuds pauses playback and putting them back in resumes playback if previously paused by LibrePods.
 
+### Milestone 12: Comprehensive Bug Hunt & System Hardening
+- **Goal**: Audit the entire Windows codebase for out-of-bounds memory accesses, GUI freezing issues, packet parser gaps, and thread safety bugs.
+- **Bugs Uncovered & Fixed**:
+  1. **BLE Manufacturer Data Buffer Underflow (`blemanager.cpp`)**: Fixed out-of-bounds access where Proximity Pairing packets shorter than 27 bytes could crash the beacon parser when slicing `data.mid(data.size() - 16)` or indexing byte 10. Required `data.size() >= 27`.
+  2. **Overlapped I/O UI Freezing (`main.cpp`)**: Replaced blocking `GetOverlappedResult(..., TRUE)` on the main GUI thread with a 300ms `WaitForSingleObject` timeout and `CancelIoEx` fallback for both `writePacketToSocket` and `writeMagicAapRaw`. Prevents indefinite GUI freezes if Bluetooth communication drops mid-write.
+  3. **Battery Packet Parsing Drop (`main.cpp`)**: Fixed packet parser that strictly required packet size to be 22 or 12 bytes. 2-component AirPods battery status packets (17 bytes) were silently dropped. Relaxed condition to `data.size() >= 7 && data.startsWith(AirPodsPackets::Parse::BATTERY_STATUS)` matching `Battery::parsePacket`.
+  4. **Magic Pairing & Cross-Device Relay Broken on Windows (`main.cpp`)**:
+     - `initiateMagicPairing()` evaluated `!socket || !socket->isOpen()`, permanently failing because Windows uses `m_hMagicAap`. Updated to `!areAirpodsConnected()`.
+     - `handlePhonePacket()` attempted direct socket writes and invoked Linux-only `bluetoothctl`. Replaced with `writePacketToSocket` and `closeMagicAap()`, enabling proper cross-device handoff.
+  5. **Spatial Audio Tracker Signal Emission in Destructor (`spatialaudiotracker.hpp`)**: Guarded `~SpatialAudioTracker()` by stopping watchdog timers, closing UDP socket, and calling `disconnect()` to prevent undefined behavior and use-after-free during teardown.
+
 ---
 
 ## 4. Building and Running

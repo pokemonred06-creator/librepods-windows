@@ -406,9 +406,9 @@ public slots:
 
     void initiateMagicPairing()
     {
-        if (!socket || !socket->isOpen())
+        if (!areAirpodsConnected())
         {
-            LOG_ERROR("Socket not open, Magic Pairing cannot be started");
+            LOG_ERROR("AirPods not connected, Magic Pairing cannot be started");
             return;
         }
 
@@ -549,7 +549,15 @@ public slots:
             BOOL ok = WriteFile(m_hMagicAap, packet.constData(), static_cast<DWORD>(packet.size()), &written, &ov);
             if (!ok && GetLastError() == ERROR_IO_PENDING)
             {
-                GetOverlappedResult(m_hMagicAap, &ov, &written, TRUE);
+                if (WaitForSingleObject(ov.hEvent, 300) == WAIT_OBJECT_0)
+                {
+                    GetOverlappedResult(m_hMagicAap, &ov, &written, FALSE);
+                }
+                else
+                {
+                    LOG_ERROR("MagicAAP WriteFile timed out after 300ms");
+                    CancelIoEx(m_hMagicAap, &ov);
+                }
             }
             CloseHandle(ov.hEvent);
 
@@ -1026,7 +1034,7 @@ private slots:
             mediaController->handleEarDetection(m_deviceInfo->getEarDetection());
         }
         // Battery Status
-        else if ((data.size() == 22 || data.size() == 12) && data.startsWith(AirPodsPackets::Parse::BATTERY_STATUS))
+        else if (data.size() >= 7 && data.startsWith(AirPodsPackets::Parse::BATTERY_STATUS))
         {
             m_deviceInfo->getBattery()->parsePacket(data);
             m_deviceInfo->updateBatteryStatus();
@@ -1134,11 +1142,10 @@ private slots:
         if (packet.startsWith(AirPodsPackets::Phone::NOTIFICATION))
         {
             QByteArray airpodsPacket = packet.mid(4);
-            if (socket && socket->isOpen()) {
-                socket->write(airpodsPacket);
-                LOG_DEBUG("Relayed packet to AirPods: " << airpodsPacket.toHex());
+            if (areAirpodsConnected()) {
+                writePacketToSocket(airpodsPacket, "Relayed notification to AirPods: ");
             } else {
-                LOG_ERROR("Socket is not open, cannot relay packet to AirPods");
+                LOG_ERROR("AirPods not connected, cannot relay packet to AirPods");
             }
         }
         else if (packet.startsWith(AirPodsPackets::Phone::CONNECTED))
@@ -1156,33 +1163,39 @@ private slots:
         else if (packet.startsWith(AirPodsPackets::Phone::STATUS_REQUEST))
         {
             LOG_INFO("Connection status request received");
-            QByteArray response = (socket && socket->isOpen()) ? AirPodsPackets::Phone::CONNECTED
-                                                               : AirPodsPackets::Phone::DISCONNECTED;
+            QByteArray response = areAirpodsConnected() ? AirPodsPackets::Phone::CONNECTED
+                                                        : AirPodsPackets::Phone::DISCONNECTED;
             phoneSocket->write(response);
             LOG_DEBUG("Sent connection status response: " << response.toHex());
         }
         else if (packet.startsWith(AirPodsPackets::Phone::DISCONNECT_REQUEST))
         {
             LOG_INFO("Disconnect request received");
-            if (socket && socket->isOpen()) {
-                socket->close();
-                LOG_INFO("Disconnected from AirPods");
-                QProcess process;
-                process.start("bluetoothctl", QStringList() << "disconnect" << m_deviceInfo->bluetoothAddress());
-                process.waitForFinished();
-                QString output = process.readAllStandardOutput().trimmed();
-                LOG_INFO("Bluetoothctl output: " << output);
+            if (areAirpodsConnected()) {
+#ifdef Q_OS_WIN
+                closeMagicAap();
+                LOG_INFO("Disconnected from AirPods via closeMagicAap");
+#else
+                if (socket && socket->isOpen()) {
+                    socket->close();
+                    LOG_INFO("Disconnected from AirPods");
+                    QProcess process;
+                    process.start("bluetoothctl", QStringList() << "disconnect" << m_deviceInfo->bluetoothAddress());
+                    process.waitForFinished();
+                    QString output = process.readAllStandardOutput().trimmed();
+                    LOG_INFO("Bluetoothctl output: " << output);
+                }
+#endif
                 isConnectedLocally = false;
                 CrossDevice.isAvailable = true;
             }
         }
         else
         {
-            if (socket && socket->isOpen()) {
-                socket->write(packet);
-                LOG_DEBUG("Relayed packet to AirPods: " << packet.toHex());
+            if (areAirpodsConnected()) {
+                writePacketToSocket(packet, "Relayed packet to AirPods: ");
             } else {
-                LOG_ERROR("Socket is not open, cannot relay packet to AirPods");
+                LOG_ERROR("AirPods not connected, cannot relay packet to AirPods");
             }
         }
     }
@@ -1322,7 +1335,15 @@ public:
         BOOL ok = WriteFile(m_hMagicAap, data, size, &written, &ov);
         if (!ok && GetLastError() == ERROR_IO_PENDING)
         {
-            GetOverlappedResult(m_hMagicAap, &ov, &written, TRUE);
+            if (WaitForSingleObject(ov.hEvent, 300) == WAIT_OBJECT_0)
+            {
+                GetOverlappedResult(m_hMagicAap, &ov, &written, FALSE);
+            }
+            else
+            {
+                LOG_ERROR("MagicAAP raw write timed out after 300ms");
+                CancelIoEx(m_hMagicAap, &ov);
+            }
         }
         CloseHandle(ov.hEvent);
         return (written == size);

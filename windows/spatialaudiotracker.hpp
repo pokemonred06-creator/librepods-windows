@@ -40,10 +40,15 @@ public:
 
     ~SpatialAudioTracker() override
     {
-        if (m_enabled)
+        if (m_watchdogTimer)
         {
-            emit sendPacketRequested(AirPodsPackets::SpatialAudio::STOP_TRACKING);
+            m_watchdogTimer->stop();
         }
+        if (m_udpSocket)
+        {
+            m_udpSocket->close();
+        }
+        disconnect(this, nullptr, nullptr, nullptr);
     }
 
     bool isEnabled() const { return m_enabled; }
