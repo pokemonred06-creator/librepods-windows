@@ -502,32 +502,17 @@ void sendWindowsMediaCommandAsync(bool pause)
 void MediaController::play()
 {
 #ifdef Q_OS_WIN
-  if (m_pausedByLibrePods)
-  {
-    LOG_INFO("Windows: Resuming media playback via VK_MEDIA_PLAY_PAUSE");
-    INPUT inputs[2] = {};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, inputs, sizeof(INPUT));
-    m_pausedByLibrePods = false;
-  }
-  else
-  {
-    LOG_DEBUG("Windows: play called but playback was not paused by LibrePods");
-  }
-  return;
+  LOG_INFO("Windows: Resuming media playback");
+  m_pausedByLibrePods = false;
+  pausedByAppServices.clear();
+  sendWindowsMediaCommandAsync(false);
 #else
   if (pausedByAppServices.isEmpty())
   {
     LOG_INFO("No services to resume");
     return;
   }
-#endif
 
-#ifndef Q_OS_WIN
   QDBusConnection bus = QDBusConnection::sessionBus();
   int resumedCount = 0;
 
@@ -566,11 +551,6 @@ void MediaController::play()
   {
     LOG_ERROR("Failed to resume any media players via DBus");
   }
-#else
-  LOG_INFO("Windows: Resuming media playback");
-  m_pausedByLibrePods = false;
-  pausedByAppServices.clear();
-  sendWindowsMediaCommandAsync(false);
 #endif
 }
 
