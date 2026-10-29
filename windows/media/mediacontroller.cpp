@@ -46,26 +46,67 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
 
   bool primaryInEar = earDetection->isPrimaryInEar();
   bool secondaryInEar = earDetection->isSecondaryInEar();
+  bool primaryAvailable = (earDetection->getprimaryStatus() != EarDetection::EarDetectionStatus::InCase &&
+                           earDetection->getprimaryStatus() != EarDetection::EarDetectionStatus::Disconnected);
+  bool secondaryAvailable = (earDetection->getsecondaryStatus() != EarDetection::EarDetectionStatus::InCase &&
+                             earDetection->getsecondaryStatus() != EarDetection::EarDetectionStatus::Disconnected);
 
   LOG_DEBUG("Ear detection status: primaryInEar="
-            << primaryInEar << ", secondaryInEar=" << secondaryInEar
-            << ", isAirPodsActive=" << isActiveOutputDeviceAirPods());
+            << primaryInEar << " (avail=" << primaryAvailable << "), secondaryInEar="
+            << secondaryInEar << " (avail=" << secondaryAvailable << ")");
 
-  // First handle playback pausing based on selected behavior
+  // First handle playback pausing based on selected behavior and available earbuds
   bool shouldPause = false;
   bool shouldResume = false;
 
-  if (earDetectionBehavior == PauseWhenOneRemoved)
+  if (primaryAvailable && secondaryAvailable)
   {
-    shouldPause = !primaryInEar || !secondaryInEar;
-    shouldResume = primaryInEar && secondaryInEar;
+    // Both earbuds are in active use
+    if (earDetectionBehavior == PauseWhenOneRemoved)
+    {
+      shouldPause = !primaryInEar || !secondaryInEar;
+      shouldResume = primaryInEar && secondaryInEar;
+    }
+    else // PauseWhenBothRemoved
+    {
+      shouldPause = !primaryInEar && !secondaryInEar;
+      shouldResume = primaryInEar || secondaryInEar;
+    }
   }
-  else if (earDetectionBehavior == PauseWhenBothRemoved)
+  else if (primaryAvailable)
   {
-    shouldPause = !primaryInEar && !secondaryInEar;
-    shouldResume = primaryInEar || secondaryInEar;
+    // Single earbud in use (primary)
+    shouldPause = !primaryInEar;
+    shouldResume = primaryInEar;
+  }
+  else if (secondaryAvailable)
+  {
+    // Single earbud in use (secondary)
+    shouldPause = !secondaryInEar;
+    shouldResume = secondaryInEar;
+  }
+  else
+  {
+    // Neither earbud is in the ear
+    shouldPause = true;
+    shouldResume = false;
   }
 
+#ifdef Q_OS_WIN
+  if (shouldPause)
+  {
+    if (getCurrentMediaState() == Playing)
+    {
+      LOG_INFO("Ear detection: earbud(s) removed, pausing media playback");
+      pause();
+    }
+  }
+  else if (shouldResume && m_pausedByLibrePods)
+  {
+    LOG_INFO("Ear detection: earbud(s) inserted, resuming media playback");
+    play();
+  }
+#else
   if (shouldPause && isActiveOutputDeviceAirPods())
   {
     if (getCurrentMediaState() == Playing)
@@ -74,6 +115,7 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
       pause();
     }
   }
+#endif
 
   // Then handle device profile switching
   if (primaryInEar || secondaryInEar)
@@ -81,16 +123,12 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
     LOG_INFO("At least one AirPod is in ear");
     activateA2dpProfile();
 
-    // Resume if conditions are met and we previously paused
-    #ifdef Q_OS_WIN
-    bool canResume = m_pausedByLibrePods;
-#else
-    bool canResume = !pausedByAppServices.isEmpty();
-#endif
-    if (shouldResume && canResume && isActiveOutputDeviceAirPods())
+#ifndef Q_OS_WIN
+    if (shouldResume && !pausedByAppServices.isEmpty() && isActiveOutputDeviceAirPods())
     {
       play();
     }
+#endif
   }
   else
   {
@@ -524,8 +562,6 @@ MediaController::~MediaController() {
 
 QString MediaController::getAudioDeviceName()
 {
-  if (connectedDeviceMacAddress.isEmpty()) { return QString(); }
-
   QString cardName = getCardNameForDevice(connectedDeviceMacAddress);
   if (cardName.isEmpty()) {
     LOG_ERROR("No matching Bluetooth card found for MAC address: " << connectedDeviceMacAddress);
