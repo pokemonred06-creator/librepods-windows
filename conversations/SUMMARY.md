@@ -135,6 +135,7 @@ This document provides a structured, high-level technical overview of all develo
   10. **COM Apartment Unbalancing (`windowsaudiocontroller.cpp`)**: Fixed unbalanced `CoUninitialize()` when `CoInitializeEx()` returned `RPC_E_CHANGED_MODE` by tracking `m_comInitialized`.
   11. **Conversational Awareness on Windows (`mediacontroller.cpp` & `windowsaudiocontroller.cpp`)**: Implemented `getDefaultSinkFriendlyName()` to accurately identify AirPods as the active Windows default output, enabling auto-volume reduction and restoration during speech.
   12. **Window Message Dangling Pointer (`windowssleepmonitor.cpp`)**: Cleared `GWLP_USERDATA` to `0` prior to `DestroyWindow()` in `~WindowsSleepMonitor()` to prevent trailing window messages from accessing half-destructed memory.
+  13. **iOS-Style Quick Return Auto-Resume Window (`mediacontroller.cpp`)**: Implemented a 15-second auto-resume timer matching iOS behavior. When earbuds are taken out, media pauses immediately and a 15-second countdown starts. If earbuds are placed back in the ear within 15 seconds, playback resumes automatically. If left out longer than 15 seconds (or placed into the case), the window expires and requires manual playback resumption. Media controls now utilize extended key codes with scan codes (`KEYEVENTF_EXTENDEDKEY`).
 
 ---
 

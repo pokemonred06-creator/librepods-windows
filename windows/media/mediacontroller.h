@@ -12,6 +12,7 @@
 class QProcess;
 class EarDetection;
 class PlayerStatusWatcher;
+class QTimer;
 
 #ifndef Q_OS_WIN
 class QDBusInterface;
@@ -88,6 +89,10 @@ private:
   QString m_cachedA2dpProfile;
   bool m_pausedByLibrePods = false;
   bool m_lastWereInEar = false;
+  QTimer *m_autoResumeTimer = nullptr;
+
+public:
+  void cancelAutoResume();
 };
 
 #endif // MEDIACONTROLLER_H

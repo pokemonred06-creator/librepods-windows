@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QThread>
 #include <QRegularExpression>
+#include <QTimer>
 
 #ifndef Q_OS_WIN
 #include <QDBusConnection>
@@ -33,6 +34,12 @@ MediaController::MediaController(QObject *parent) : QObject(parent) {
   {
     LOG_ERROR("Failed to initialize Windows Audio controller");
   }
+  m_autoResumeTimer = new QTimer(this);
+  m_autoResumeTimer->setSingleShot(true);
+  connect(m_autoResumeTimer, &QTimer::timeout, this, [this]() {
+    m_pausedByLibrePods = false;
+    LOG_INFO("Ear detection: iOS-style auto-resume timeout expired (15s). Manual resume required.");
+  });
 #endif
 }
 
@@ -93,13 +100,26 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
   }
 
 #ifdef Q_OS_WIN
+  if (earDetection->oneOrMorePodsInCase())
+  {
+    if (m_autoResumeTimer && m_autoResumeTimer->isActive())
+    {
+      m_autoResumeTimer->stop();
+    }
+    m_pausedByLibrePods = false;
+  }
+
   if (shouldPause)
   {
     if (m_lastWereInEar)
     {
       m_lastWereInEar = false;
-      LOG_INFO("Ear detection: earbud(s) removed, pausing media playback");
+      LOG_INFO("Ear detection: earbud(s) removed, pausing media playback (iOS 15s auto-resume window active)");
       pause();
+      if (m_autoResumeTimer)
+      {
+        m_autoResumeTimer->start(15000); // 15 seconds iOS quick return window
+      }
     }
   }
   else if (shouldResume)
@@ -107,10 +127,21 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
     if (!m_lastWereInEar)
     {
       m_lastWereInEar = true;
-      if (m_pausedByLibrePods)
+      if (m_pausedByLibrePods && m_autoResumeTimer && m_autoResumeTimer->isActive())
       {
-        LOG_INFO("Ear detection: earbud(s) inserted, resuming media playback");
+        m_autoResumeTimer->stop();
+        m_pausedByLibrePods = false;
+        LOG_INFO("Ear detection: earbud(s) put back quickly within 15s window, resuming media playback");
         play();
+      }
+      else
+      {
+        if (m_autoResumeTimer)
+        {
+          m_autoResumeTimer->stop();
+        }
+        m_pausedByLibrePods = false;
+        LOG_INFO("Ear detection: earbud(s) put back after timeout window; manual resume required");
       }
     }
   }
@@ -660,4 +691,12 @@ bool MediaController::isProfileAvailable(const QString &cardName, const QString 
 #else
   return false;
 #endif
+}
+void MediaController::cancelAutoResume()
+{
+  if (m_autoResumeTimer)
+  {
+    m_autoResumeTimer->stop();
+  }
+  m_pausedByLibrePods = false;
 }

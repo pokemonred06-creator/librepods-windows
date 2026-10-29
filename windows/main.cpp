@@ -783,6 +783,10 @@ private slots:
         m_deviceInfo->reset();
         if (mediaController)
         {
+            mediaController->cancelAutoResume();
+        }
+        if (mediaController)
+        {
             if (mediaController->getEarDetectionBehavior() != MediaController::Disabled &&
                 mediaController->getCurrentMediaState() == MediaController::Playing)
             {
@@ -1377,6 +1381,7 @@ public:
         }
         if (mediaController)
         {
+            mediaController->cancelAutoResume();
             mediaController->resetConversationalAwareness();
         }
         if (m_deviceInfo && m_deviceInfo->getSpatialTracker())
