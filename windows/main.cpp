@@ -1037,7 +1037,7 @@ private slots:
             }
         }
         // Ear Detection
-        else if (data.size() == 8 && data.startsWith(AirPodsPackets::Parse::EAR_DETECTION))
+        else if (data.size() >= 8 && data.startsWith(AirPodsPackets::Parse::EAR_DETECTION))
         {
             m_deviceInfo->getEarDetection()->parseData(data);
             mediaController->handleEarDetection(m_deviceInfo->getEarDetection());

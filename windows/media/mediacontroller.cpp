@@ -95,16 +95,24 @@ void MediaController::handleEarDetection(EarDetection *earDetection)
 #ifdef Q_OS_WIN
   if (shouldPause)
   {
-    if (getCurrentMediaState() == Playing)
+    if (m_lastWereInEar)
     {
+      m_lastWereInEar = false;
       LOG_INFO("Ear detection: earbud(s) removed, pausing media playback");
       pause();
     }
   }
-  else if (shouldResume && m_pausedByLibrePods)
+  else if (shouldResume)
   {
-    LOG_INFO("Ear detection: earbud(s) inserted, resuming media playback");
-    play();
+    if (!m_lastWereInEar)
+    {
+      m_lastWereInEar = true;
+      if (m_pausedByLibrePods)
+      {
+        LOG_INFO("Ear detection: earbud(s) inserted, resuming media playback");
+        play();
+      }
+    }
   }
 #else
   if (shouldPause && isActiveOutputDeviceAirPods())
@@ -476,8 +484,20 @@ void MediaController::play()
     LOG_ERROR("Failed to resume any media players via DBus");
   }
 #else
-  // On Windows, use Windows Media Control API
-  LOG_DEBUG("Media playback resume not fully implemented on Windows yet");
+  LOG_INFO("Windows: Resuming media playback via VK_MEDIA_PLAY_PAUSE");
+  INPUT inputs[2] = {};
+  inputs[0].type = INPUT_KEYBOARD;
+  inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+  inputs[0].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
+  inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+
+  inputs[1].type = INPUT_KEYBOARD;
+  inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+  inputs[1].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
+  inputs[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+
+  SendInput(2, inputs, sizeof(INPUT));
+  m_pausedByLibrePods = false;
   pausedByAppServices.clear();
 #endif
 }
@@ -489,9 +509,14 @@ void MediaController::pause()
   INPUT inputs[2] = {};
   inputs[0].type = INPUT_KEYBOARD;
   inputs[0].ki.wVk = VK_MEDIA_PLAY_PAUSE;
+  inputs[0].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
+  inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+
   inputs[1].type = INPUT_KEYBOARD;
   inputs[1].ki.wVk = VK_MEDIA_PLAY_PAUSE;
-  inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+  inputs[1].ki.wScan = static_cast<WORD>(MapVirtualKey(VK_MEDIA_PLAY_PAUSE, MAPVK_VK_TO_VSC));
+  inputs[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+
   SendInput(2, inputs, sizeof(INPUT));
   m_pausedByLibrePods = true;
   return;
