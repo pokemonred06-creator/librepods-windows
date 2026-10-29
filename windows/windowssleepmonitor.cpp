@@ -25,6 +25,7 @@ WindowsSleepMonitor::~WindowsSleepMonitor()
     }
     if (m_hwnd)
     {
+        SetWindowLongPtr(m_hwnd, GWLP_USERDATA, 0);
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
     }

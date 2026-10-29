@@ -139,6 +139,10 @@ public:
         {
             secondaryPod = podsInPacket[1]; // Second pod is secondary
         }
+        else if (podsInPacket.size() == 1 && podsInPacket[0] != Component::Headset)
+        {
+            secondaryPod = (podsInPacket[0] == Component::Left) ? Component::Right : Component::Left;
+        }
 
         // Emit signal to notify about battery status change
         emit batteryStatusChanged();

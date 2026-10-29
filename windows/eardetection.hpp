@@ -33,7 +33,7 @@ public:
 
     bool parseData(const QByteArray &data)
     {
-        if (data.size() < 2)
+        if (data.size() < 8)
         {
             return false;
         }

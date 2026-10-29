@@ -275,8 +275,16 @@ public:
         closeMagicAap();
 #endif
 
-        delete socket;
-        delete phoneSocket;
+        if (socket) {
+            socket->close();
+            socket->deleteLater();
+            socket = nullptr;
+        }
+        if (phoneSocket) {
+            phoneSocket->close();
+            phoneSocket->deleteLater();
+            phoneSocket = nullptr;
+        }
     }
 
     bool areAirpodsConnected() const {
@@ -762,6 +770,7 @@ private slots:
         {
             LOG_WARN("Socket is still open, closing it");
             socket->close();
+            socket->deleteLater();
             socket = nullptr;
         }
         if (phoneSocket && phoneSocket->isOpen())

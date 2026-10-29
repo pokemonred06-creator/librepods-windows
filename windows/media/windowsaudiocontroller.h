@@ -22,6 +22,7 @@ public:
 
     bool initialize();
     QString getDefaultSink();
+    QString getDefaultSinkFriendlyName();
     int getSinkVolume(const QString &sinkName);
     bool setSinkVolume(const QString &sinkName, int volumePercent);
     bool setCardProfile(const QString &cardName, const QString &profileName);
@@ -35,6 +36,7 @@ private:
     IAudioEndpointVolume *m_endpointVolume;
 #endif
     bool m_initialized;
+    bool m_comInitialized;
 
     QString getDeviceFriendlyName(void *device);
     bool setDefaultAudioDevice(const QString &deviceId);

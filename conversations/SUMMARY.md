@@ -128,6 +128,13 @@ This document provides a structured, high-level technical overview of all develo
      - `initiateMagicPairing()` evaluated `!socket || !socket->isOpen()`, permanently failing because Windows uses `m_hMagicAap`. Updated to `!areAirpodsConnected()`.
      - `handlePhonePacket()` attempted direct socket writes and invoked Linux-only `bluetoothctl`. Replaced with `writePacketToSocket` and `closeMagicAap()`, enabling proper cross-device handoff.
   5. **Spatial Audio Tracker Signal Emission in Destructor (`spatialaudiotracker.hpp`)**: Guarded `~SpatialAudioTracker()` by stopping watchdog timers, closing UDP socket, and calling `disconnect()` to prevent undefined behavior and use-after-free during teardown.
+  6. **Ear Detection Packet Buffer Bounds Underflow (`eardetection.hpp`)**: `EarDetection::parseData()` checked `data.size() < 2` but accessed `data[6]` and `data[7]`. Raised minimum bound to `data.size() < 8` preventing potential out-of-bounds reads.
+  7. **Single-Pod Secondary Battery Stale State (`battery.hpp`)**: When only one pod was present in the battery packet, `secondaryPod` retained stale state. Now reliably sets opposite pod as secondary.
+  8. **Tray Icon Battery Parsing Crash Protection (`trayiconmanager.cpp`)**: Protected `updateIconFromBattery()` against indexing out-of-bounds when parsing non-standard or error battery strings.
+  9. **Bluetooth Socket Memory Leaks & Destructor Safety (`main.cpp`)**: Cleaned up unparented `QBluetoothSocket` instances on disconnect and app exit using safe `deleteLater()` rather than leaking memory or unparented raw deletes.
+  10. **COM Apartment Unbalancing (`windowsaudiocontroller.cpp`)**: Fixed unbalanced `CoUninitialize()` when `CoInitializeEx()` returned `RPC_E_CHANGED_MODE` by tracking `m_comInitialized`.
+  11. **Conversational Awareness on Windows (`mediacontroller.cpp` & `windowsaudiocontroller.cpp`)**: Implemented `getDefaultSinkFriendlyName()` to accurately identify AirPods as the active Windows default output, enabling auto-volume reduction and restoration during speech.
+  12. **Window Message Dangling Pointer (`windowssleepmonitor.cpp`)**: Cleared `GWLP_USERDATA` to `0` prior to `DestroyWindow()` in `~WindowsSleepMonitor()` to prevent trailing window messages from accessing half-destructed memory.
 
 ---
 

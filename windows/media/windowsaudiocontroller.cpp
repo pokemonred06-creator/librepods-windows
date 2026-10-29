@@ -16,6 +16,7 @@ WindowsAudioController::WindowsAudioController(QObject *parent)
     , m_endpointVolume(nullptr)
 #endif
     , m_initialized(false)
+    , m_comInitialized(false)
 {
 }
 
@@ -32,7 +33,11 @@ WindowsAudioController::~WindowsAudioController()
         m_deviceEnumerator->Release();
         m_deviceEnumerator = nullptr;
     }
-    CoUninitialize();
+    if (m_comInitialized)
+    {
+        CoUninitialize();
+        m_comInitialized = false;
+    }
 #endif
 }
 
@@ -40,7 +45,11 @@ bool WindowsAudioController::initialize()
 {
 #ifdef Q_OS_WIN
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE)
+    if (SUCCEEDED(hr))
+    {
+        m_comInitialized = true;
+    }
+    else if (hr != RPC_E_CHANGED_MODE)
     {
         LOG_ERROR("Failed to initialize COM");
         return false;
@@ -92,6 +101,25 @@ QString WindowsAudioController::getDefaultSink()
 
     defaultDevice->Release();
     return result;
+#else
+    return QString();
+#endif
+}
+
+QString WindowsAudioController::getDefaultSinkFriendlyName()
+{
+#ifdef Q_OS_WIN
+    if (!m_initialized || !m_deviceEnumerator)
+        return QString();
+
+    IMMDevice *defaultDevice = nullptr;
+    HRESULT hr = m_deviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defaultDevice);
+    if (FAILED(hr) || !defaultDevice)
+        return QString();
+
+    QString friendlyName = getDeviceFriendlyName(defaultDevice);
+    defaultDevice->Release();
+    return friendlyName;
 #else
     return QString();
 #endif
