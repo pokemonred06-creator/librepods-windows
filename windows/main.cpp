@@ -572,12 +572,20 @@ public slots:
             if (written == static_cast<DWORD>(packet.size()))
             {
                 LOG_INFO("MagicAAP write: " << logMessage << packet.toHex());
+                m_magicAapWriteFailures = 0;
                 return true;
             }
             else
             {
-                LOG_ERROR("MagicAAP WriteFile failed: " << GetLastError());
-                closeMagicAap();
+                DWORD err = GetLastError();
+                m_magicAapWriteFailures++;
+                LOG_ERROR("MagicAAP WriteFile failed (attempt " << m_magicAapWriteFailures << "/3): " << err);
+                if (m_magicAapWriteFailures >= 3)
+                {
+                    LOG_WARN("MagicAAP write failed 3 consecutive times, closing handle for reconnection");
+                    closeMagicAap();
+                    m_magicAapWriteFailures = 0;
+                }
             }
         }
 #endif
@@ -1473,6 +1481,10 @@ public:
 
         m_deviceInfo->setBluetoothAddress("34:0E:22:56:BA:38");
         mediaController->setConnectedDeviceMacAddress("34_0E_22_56_BA_38");
+        if (m_bleManager && m_bleManager->isScanning()) {
+            LOG_INFO("AirPods connected via MagicAAP; stopping background BLE scan to prevent DAS radio contention");
+            m_bleManager->stopScan();
+        }
 
         if (m_deviceInfo->deviceName().isEmpty())
         {
@@ -1626,6 +1638,7 @@ private:
     AutoStartManager *m_autoStartManager;
     int m_retryAttempts = 3;
     bool m_hideOnStart = false;
+    int m_magicAapWriteFailures = 0;
     DeviceInfo *m_deviceInfo;
     BleManager *m_bleManager;
 #ifdef Q_OS_LINUX
